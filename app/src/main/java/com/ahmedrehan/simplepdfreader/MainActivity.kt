@@ -130,7 +130,7 @@ class MainActivity : Activity() {
             val page = pdf.openPage(index)
             try {
                 val screenWidth = (resources.displayMetrics.widthPixels - 24).coerceAtLeast(320)
-                val maxDimension = 1600
+                val maxDimension = 1200
                 val scale = minOf(
                     screenWidth.toFloat() / page.width,
                     maxDimension.toFloat() / page.width,
@@ -138,7 +138,7 @@ class MainActivity : Activity() {
                 )
                 val bitmapWidth = (page.width * scale).toInt().coerceAtLeast(1)
                 val bitmapHeight = (page.height * scale).toInt().coerceAtLeast(1)
-                val bitmap = Bitmap.createBitmap(bitmapWidth, bitmapHeight, Bitmap.Config.RGB_565)
+                val bitmap = Bitmap.createBitmap(bitmapWidth, bitmapHeight, Bitmap.Config.ARGB_8888)
                 bitmap.eraseColor(Color.WHITE)
                 page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
 
