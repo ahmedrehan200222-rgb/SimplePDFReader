@@ -1,269 +1,131 @@
 package com.ahmedrehan.simplepdfreader
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.content.res.Configuration
-import android.graphics.Bitmap
-import android.graphics.Color
+import android.graphics.*
 import android.graphics.pdf.PdfRenderer
+import android.net.Uri
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
-import android.view.Gravity
-import android.view.MotionEvent
-import android.view.ScaleGestureDetector
-import android.view.View
-import android.view.ViewGroup
-import android.widget.Button
-import android.widget.FrameLayout
-import android.widget.ImageView
-import android.widget.LinearLayout
-import android.widget.ScrollView
-import android.widget.TextView
-import android.widget.Toast
+import android.view.*
+import android.widget.*
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.IOException
+import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
 
 class MainActivity : Activity() {
-    private var fileDescriptor: ParcelFileDescriptor? = null
+    private var pfd: ParcelFileDescriptor? = null
     private var renderer: PdfRenderer? = null
-    private var currentBitmap: Bitmap? = null
-    private var currentPage = 0
-
-    private lateinit var pageLabel: TextView
-    private lateinit var pageImage: ZoomableImageView
-    private lateinit var previousButton: Button
-    private lateinit var nextButton: Button
+    private var page = 0
+    private var pageUri: Uri? = null
+    private lateinit var reader: ReaderView
+    private lateinit var root: LinearLayout
+    private lateinit var toolbar: LinearLayout
+    private lateinit var status: TextView
     private lateinit var openButton: Button
-    private lateinit var controls: LinearLayout
+    private val prefs by lazy { getSharedPreferences("reader", MODE_PRIVATE) }
+    private val marks = mutableListOf<Mark>()
+    private val colors = intArrayOf(0xFFFFEB3B.toInt(),0xFF4CAF50.toInt(),0xFF2196F3.toInt(),0xFFE91E63.toInt(),0xFFFF9800.toInt(),0xFF9C27B0.toInt(),0xFFF44336.toInt(),0xFF00BCD4.toInt())
+    private val colorNames = arrayOf("أصفر","أخضر","أزرق","وردي","برتقالي","بنفسجي","أحمر","سماوي")
+    private var chosenColor = 0
+    private var opacity = 105
+    private var soundMode = 1
+    private var night = false
+    private var fitWidth = true
+    private var keepAwake = true
+    private var brightness = 0.5f
+    private var grayscale = false
+
+    data class Mark(val page:Int, val left:Float, val top:Float, val right:Float, val bottom:Float, var color:Int, var alpha:Int)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, 4, 0, 0)
-            setBackgroundColor(Color.rgb(245, 245, 245))
-        }
-
-        openButton = Button(this).apply {
-            text = "Open PDF"
-            setOnClickListener { choosePdf() }
-        }
-        root.addView(openButton, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ))
-
-        controls = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-        }
-        previousButton = Button(this).apply {
-            text = "Previous"
-            isEnabled = false
-            setOnClickListener { showPage(currentPage - 1) }
-        }
-        nextButton = Button(this).apply {
-            text = "Next"
-            isEnabled = false
-            setOnClickListener { showPage(currentPage + 1) }
-        }
-        pageLabel = TextView(this).apply {
-            text = "No PDF opened"
-            textSize = 15f
-            gravity = Gravity.CENTER
-            setPadding(8, 0, 8, 0)
-        }
-        controls.addView(previousButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        controls.addView(pageLabel, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        controls.addView(nextButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        root.addView(controls)
-
-        pageImage = ZoomableImageView(this) { next ->
-            showPage(currentPage + if (next) 1 else -1)
-        }.apply {
-            adjustViewBounds = true
-            setOnClickListener { toggleReaderControls() }
-            scaleType = ImageView.ScaleType.FIT_CENTER
-            setBackgroundColor(Color.WHITE)
-        }
-        val scroll = ScrollView(this).apply {
-            isFillViewport = true
-            addView(pageImage, FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            ))
-        }
-        root.addView(scroll, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
-        ))
-
+        soundMode = prefs.getInt("soundMode",1)
+        chosenColor = prefs.getInt("color",0)
+        opacity = prefs.getInt("opacity",105)
+        night = prefs.getBoolean("night",false)
+        keepAwake = prefs.getBoolean("awake",true)
+        root = LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setBackgroundColor(Color.rgb(245,245,245)) }
+        openButton = Button(this).apply { text="فتح ملف PDF"; setOnClickListener { choosePdf() } }
+        root.addView(openButton, LinearLayout.LayoutParams(-1,-2))
+        toolbar = LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setPadding(3,0,3,3) }
+        val row1=LinearLayout(this).apply { gravity=Gravity.CENTER }
+        row1.addView(button("السابق"){showPage(page-1)},LinearLayout.LayoutParams(0,-2,1f))
+        status=TextView(this).apply { text="لم يتم فتح ملف"; gravity=Gravity.CENTER; textSize=14f }
+        row1.addView(status,LinearLayout.LayoutParams(0,-2,1f))
+        row1.addView(button("التالي"){showPage(page+1)},LinearLayout.LayoutParams(0,-2,1f))
+        toolbar.addView(row1)
+        val row2=LinearLayout(this).apply { gravity=Gravity.CENTER }
+        row2.addView(button("تمييز"){showHighlightHelp()},LinearLayout.LayoutParams(0,-2,1f))
+        row2.addView(button("الألوان"){showColorSettings()},LinearLayout.LayoutParams(0,-2,1f))
+        row2.addView(button("علامة صفحة"){toggleBookmark()},LinearLayout.LayoutParams(0,-2,1f))
+        row2.addView(button("إعدادات"){showSettings()},LinearLayout.LayoutParams(0,-2,1f))
+        toolbar.addView(row2)
+        val row3=LinearLayout(this).apply { gravity=Gravity.CENTER }
+        row3.addView(button("ليلي"){night=!night; prefs.edit().putBoolean("night",night).apply(); reader.invalidate()},LinearLayout.LayoutParams(0,-2,1f))
+        row3.addView(button("أبيض وأسود"){grayscale=!grayscale; reader.invalidate()},LinearLayout.LayoutParams(0,-2,1f))
+        row3.addView(button("ملاءمة العرض"){fitWidth=!fitWidth; reader.invalidate()},LinearLayout.LayoutParams(0,-2,1f))
+        toolbar.addView(row3)
+        root.addView(toolbar)
+        reader=ReaderView()
+        root.addView(reader,LinearLayout.LayoutParams(-1,0,1f))
         setContentView(root)
+        if(keepAwake) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        val last=prefs.getString("lastUri",null)
+        if(last!=null) openUri(Uri.parse(last),false)
     }
 
-    override fun onConfigurationChanged(newConfig: Configuration) {
-        super.onConfigurationChanged(newConfig)
-        if (renderer != null) showPage(currentPage)
+    private fun button(label:String, action:()->Unit)=Button(this).apply { text=label; textSize=12f; minHeight=38; setPadding(2,0,2,0); setOnClickListener{action()} }
+    private fun choosePdf(){ val i=Intent(Intent.ACTION_OPEN_DOCUMENT).apply{addCategory(Intent.CATEGORY_OPENABLE);type="application/pdf";addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)}; startActivityForResult(i,77) }
+    @Deprecated("Legacy document picker callback for Android 7")
+    override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?){super.onActivityResult(requestCode,resultCode,data);if(requestCode==77&&resultCode==RESULT_OK){val u=data?.data?:return;try{contentResolver.takePersistableUriPermission(u,data.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION);openUri(u,true)}catch(e:Exception){toast("تعذر فتح الملف: ${e.message}")}}}
+    private fun openUri(uri:Uri,save:Boolean){
+        try{closeDocument();pfd=contentResolver.openFileDescriptor(uri,"r")?:throw IOException("ملف غير متاح");renderer=PdfRenderer(pfd!!);pageUri=uri;page=0
+            val key=uri.toString();loadMarks(key);if(save)prefs.edit().putString("lastUri",key).apply();showPage(0)
+        }catch(e:Exception){toast("تعذر فتح PDF: ${e.message}")}
     }
+    private fun showPage(index:Int){val r=renderer?:return;if(index !in 0 until r.pageCount)return;try{val p=r.openPage(index);val maxSide=1250;val s=min( min(resources.displayMetrics.widthPixels.toFloat()/p.width,maxSide.toFloat()/p.width),maxSide.toFloat()/p.height);val w=max(1,(p.width*s).toInt());val h=max(1,(p.height*s).toInt());val b=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888);b.eraseColor(Color.WHITE);p.render(b,null,null,PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY);p.close();reader.setPage(b);page=index;status.text="${index+1} / ${r.pageCount}";reader.invalidate();openButton.visibility=View.GONE;toolbar.visibility=View.GONE;window.decorView.systemUiVisibility= (View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY)}catch(e:Exception){toast("خطأ في الصفحة: ${e.message}")}}
+    private fun closeDocument(){readerOrNull()?.clearPage();renderer?.close();renderer=null;pfd?.close();pfd=null;pageUri=null}
+    private fun readerOrNull():ReaderView?=if(::reader.isInitialized)reader else null
+    private fun closeReaderUi(){closeDocument();openButton.visibility=View.VISIBLE;toolbar.visibility=View.VISIBLE;window.decorView.systemUiVisibility=View.SYSTEM_UI_FLAG_VISIBLE;status.text="لم يتم فتح ملف"}
+    override fun onBackPressed(){if(renderer!=null)closeReaderUi() else super.onBackPressed()}
+    override fun onDestroy(){closeDocument();super.onDestroy()}
+    private fun toast(s:String){Toast.makeText(this,s,Toast.LENGTH_SHORT).show()}
+    private fun storageKey()="marks:"+ (pageUri?.toString()?:return)
+    private fun loadMarks(key:String){marks.clear();try{val a=JSONArray(prefs.getString("marks:"+key,"[]"));for(i in 0 until a.length()){val o=a.getJSONObject(i);marks.add(Mark(o.getInt("p"),o.getDouble("l").toFloat(),o.getDouble("t").toFloat(),o.getDouble("r").toFloat(),o.getDouble("b").toFloat(),o.getInt("c"),o.getInt("a")))}}catch(_:Exception){}}
+    private fun saveMarks(){val key=pageUri?.toString()?:return;val a=JSONArray();marks.forEach{m->a.put(JSONObject().put("p",m.page).put("l",m.left.toDouble()).put("t",m.top.toDouble()).put("r",m.right.toDouble()).put("b",m.bottom.toDouble()).put("c",m.color).put("a",m.alpha))};prefs.edit().putString("marks:"+key,a.toString()).apply()}
+    private fun showHighlightHelp(){if(renderer==null){toast("افتح ملف PDF أولاً");return};AlertDialog.Builder(this).setTitle("إضافة تمييز").setMessage("اضغط مطولاً واسحب فوق السطر أو مجموعة السطور لتحديدها. سيُحفظ التمييز تلقائياً. اضغط على تمييز موجود لتغيير لونه أو حذفه.").setPositiveButton("حسناً",null).show()}
+    private fun showColorSettings(){val names=colorNames.toMutableList();AlertDialog.Builder(this).setTitle("لون التمييز الافتراضي").setSingleChoiceItems(names.toTypedArray(),chosenColor){d,which->chosenColor=which;prefs.edit().putInt("color",which).apply();d.dismiss();showOpacityDialog()}.setNegativeButton("إلغاء",null).show()}
+    private fun showOpacityDialog(){val box=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(24,12,24,4)};val label=TextView(this);val seek=SeekBar(this).apply{max=80;progress=opacity-25};box.addView(label);box.addView(seek);fun update(){label.text="الشفافية: ${10+seek.progress}%"};seek.setOnSeekBarChangeListener(object:SeekBar.OnSeekBarChangeListener{override fun onProgressChanged(s:SeekBar?,p:Int,u:Boolean){update()};override fun onStartTrackingTouch(s:SeekBar?){};override fun onStopTrackingTouch(s:SeekBar?){}});update();AlertDialog.Builder(this).setTitle("شفافية التمييز").setView(box).setPositiveButton("حفظ"){_,_->opacity=25+seek.progress;prefs.edit().putInt("opacity",opacity).apply()}.setNegativeButton("إلغاء",null).show()}
+    private fun showSettings(){val items=arrayOf("أزرار الصوت: التالي/السابق","أزرار الصوت طبيعية","أزرار الصوت للتحكم في السطوع","منع إطفاء الشاشة أثناء القراءة","تطبيق اللون والشفافية الافتراضيين على كل التمييزات");AlertDialog.Builder(this).setTitle("إعدادات القراءة").setItems(items){_,which->when(which){0,1,2->{soundMode=which;prefs.edit().putInt("soundMode",which).apply();toast("تم حفظ إعداد أزرار الصوت")};3->{keepAwake=!keepAwake;prefs.edit().putBoolean("awake",keepAwake).apply();if(keepAwake)window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);toast(if(keepAwake)"منع إطفاء الشاشة مفعّل" else "تم إيقاف منع إطفاء الشاشة")};4->{marks.forEach{it.color=colors[chosenColor];it.alpha=opacity};saveMarks();reader.invalidate();toast("تم تطبيق الإعداد على التمييزات")}}}.show()}
+    private fun toggleBookmark(){if(renderer==null)return;val key="bookmarks:"+(pageUri?.toString()?:return);val set=prefs.getStringSet(key,emptySet())!!.toMutableSet();if(set.contains(page.toString()))set.remove(page.toString())else set.add(page.toString());prefs.edit().putStringSet(key,set).apply();toast(if(set.contains(page.toString()))"تم حفظ علامة الصفحة" else "تم حذف علامة الصفحة");showBookmarksMenu()}
+    private fun showBookmarksMenu(){val key="bookmarks:"+(pageUri?.toString()?:return);val list=prefs.getStringSet(key,emptySet())!!.mapNotNull{it.toIntOrNull()}.sorted();if(list.isEmpty()){toast("لا توجد علامات محفوظة");return};AlertDialog.Builder(this).setTitle("الصفحات المحفوظة").setItems(list.map{"صفحة ${it+1}"}.toTypedArray()){_,which->showPage(list[which])}.setNegativeButton("إغلاق",null).show()}
+    override fun onKeyDown(keyCode:Int,event:KeyEvent?):Boolean{if(renderer!=null&&(keyCode==KeyEvent.KEYCODE_VOLUME_UP||keyCode==KeyEvent.KEYCODE_VOLUME_DOWN)){when(soundMode){0->showPage(page+if(keyCode==KeyEvent.KEYCODE_VOLUME_UP)1 else -1);1->return super.onKeyDown(keyCode,event);2->{brightness=(brightness+if(keyCode==KeyEvent.KEYCODE_VOLUME_UP)0.08f else -0.08f).coerceIn(0.05f,1f);val a=window.attributes;a.screenBrightness=brightness;window.attributes=a}};return true};return super.onKeyDown(keyCode,event)}
 
-    private fun choosePdf() {
-        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-            addCategory(Intent.CATEGORY_OPENABLE)
-            type = "application/pdf"
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
-        }
-        startActivityForResult(intent, REQUEST_OPEN_PDF)
-    }
-
-    @Deprecated("Deprecated in Android, retained for compatibility with the minimum supported version")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != REQUEST_OPEN_PDF || resultCode != RESULT_OK) return
-        val uri = data?.data ?: return
-
-        try {
-            data.flags.let { flags ->
-                contentResolver.takePersistableUriPermission(
-                    uri, flags and Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
-            }
-            closePdf()
-            fileDescriptor = contentResolver.openFileDescriptor(uri, "r")
-                ?: throw IOException("Could not open this PDF file")
-            renderer = PdfRenderer(fileDescriptor!!)
-            currentPage = 0
-            showPage(currentPage)
-        } catch (error: Exception) {
-            closePdf()
-            Toast.makeText(this, "Could not open PDF: ${error.message}", Toast.LENGTH_LONG).show()
-        }
-    }
-
-    private fun showPage(index: Int) {
-        val pdf = renderer ?: return
-        if (index !in 0 until pdf.pageCount) return
-
-        try {
-            val page = pdf.openPage(index)
-            try {
-                val screenWidth = resources.displayMetrics.widthPixels.coerceAtLeast(320)
-                val maxDimension = 1200
-                val scale = minOf(
-                    screenWidth.toFloat() / page.width,
-                    maxDimension.toFloat() / page.width,
-                    maxDimension.toFloat() / page.height
-                )
-                val bitmapWidth = (page.width * scale).toInt().coerceAtLeast(1)
-                val bitmapHeight = (page.height * scale).toInt().coerceAtLeast(1)
-                val bitmap = Bitmap.createBitmap(bitmapWidth, bitmapHeight, Bitmap.Config.ARGB_8888)
-                bitmap.eraseColor(Color.WHITE)
-                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-
-                currentBitmap?.recycle()
-                currentBitmap = bitmap
-                pageImage.resetZoom()
-                pageImage.setImageBitmap(bitmap)
-                currentPage = index
-                openButton.visibility = ViewGroup.GONE
-                controls.visibility = ViewGroup.GONE
-                window.decorView.systemUiVisibility = (View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION)
-                pageLabel.text = "${index + 1} / ${pdf.pageCount}"
-                previousButton.isEnabled = index > 0
-                nextButton.isEnabled = index < pdf.pageCount - 1
-            } finally {
-                page.close()
-            }
-        } catch (error: Exception) {
-            Toast.makeText(this, "Could not display page: ${error.message}", Toast.LENGTH_LONG).show()
-        }
-    }
-
-    private fun toggleReaderControls() {
-        if (renderer == null) return
-        val visible = controls.visibility != ViewGroup.VISIBLE
-        controls.visibility = if (visible) ViewGroup.VISIBLE else ViewGroup.GONE
-        openButton.visibility = if (visible) ViewGroup.VISIBLE else ViewGroup.GONE
-    }
-
-    private fun closePdf() {
-        if (::openButton.isInitialized) openButton.visibility = ViewGroup.VISIBLE
-        if (::controls.isInitialized) controls.visibility = ViewGroup.VISIBLE
-        window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE
-
-        pageImageOrNull()?.setImageDrawable(null)
-        currentBitmap?.recycle()
-        currentBitmap = null
-        renderer?.close()
-        renderer = null
-        fileDescriptor?.close()
-        fileDescriptor = null
-        currentPage = 0
-    }
-
-    private fun pageImageOrNull(): ImageView? = if (::pageImage.isInitialized) pageImage else null
-
-    override fun onDestroy() {
-        closePdf()
-        super.onDestroy()
-    }
-
-    private class ZoomableImageView(
-        context: android.content.Context,
-        private val onSwipe: (Boolean) -> Unit
-    ) : ImageView(context) {
-        private var scaleFactor = 1f
-        private var downX = 0f
-        private var downY = 0f
-        private val scaleDetector = ScaleGestureDetector(context,
-            object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
-                override fun onScale(detector: ScaleGestureDetector): Boolean {
-                    scaleFactor = (scaleFactor * detector.scaleFactor).coerceIn(1f, 4f)
-                    scaleX = scaleFactor
-                    scaleY = scaleFactor
-                    return true
-                }
-            })
-
-        override fun dispatchTouchEvent(event: MotionEvent): Boolean {
-            // Record a one-finger gesture for page navigation.
-            if (event.actionMasked == MotionEvent.ACTION_DOWN && event.pointerCount == 1) {
-                downX = event.x
-                downY = event.y
-            }
-
-            // Prevent the parent ScrollView from intercepting a two-finger pinch.
-            if (event.pointerCount > 1 || scaleDetector.isInProgress) {
-                parent?.requestDisallowInterceptTouchEvent(true)
-            }
-
-            if (event.actionMasked == MotionEvent.ACTION_UP && scaleFactor <= 1.05f) {
-                val dx = event.x - downX
-                val dy = event.y - downY
-                val threshold = 72f * resources.displayMetrics.density
-                if (kotlin.math.abs(dx) > threshold &&
-                    kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.3f) {
-                    onSwipe(dx < 0)
-                }
-            }
-
-            val handled = super.dispatchTouchEvent(event)
-            if (event.actionMasked == MotionEvent.ACTION_UP ||
-                event.actionMasked == MotionEvent.ACTION_CANCEL) {
-                parent?.requestDisallowInterceptTouchEvent(false)
-            }
-            return handled
-        }
-
-        override fun onTouchEvent(event: MotionEvent): Boolean {
-            scaleDetector.onTouchEvent(event)
-            return true
-        }
-
-        fun resetZoom() {
-            scaleFactor = 1f
-            scaleX = 1f
-            scaleY = 1f
-        }
-    }
-
-    companion object {
-        private const val REQUEST_OPEN_PDF = 1001
+    private inner class ReaderView:View(this){
+        private var bitmap:Bitmap?=null
+        private var zoom=1f
+        private var downX=0f;private var downY=0f;private var lastX=0f;private var lastY=0f
+        private var selecting=false;private var longStart=0L
+        private var activeRect:RectF?=null
+        private val detector=ScaleGestureDetector(this@MainActivity,object:ScaleGestureDetector.SimpleOnScaleGestureListener(){override fun onScale(d:ScaleGestureDetector):Boolean{zoom=(zoom*d.scaleFactor).coerceIn(1f,4f);invalidate();return true}})
+        private val paint=Paint(Paint.ANTI_ALIAS_FLAG)
+        private var content=RectF()
+        fun setPage(b:Bitmap){bitmap?.recycle();bitmap=b;zoom=1f;invalidate()}
+        fun clearPage(){bitmap?.recycle();bitmap=null;invalidate()}
+        private fun imageRect():RectF{val b=bitmap?:return RectF();val scale=min(width.toFloat()/b.width,height.toFloat()/b.height);val s=if(fitWidth)width.toFloat()/b.width else scale;val w=b.width*s;val h=b.height*s;return RectF((width-w)/2,(height-h)/2,(width+w)/2,(height+h)/2)}
+        override fun onDraw(c:Canvas){super.onDraw(c);val b=bitmap?:run{c.drawColor(if(night)Color.DKGRAY else Color.WHITE);return};content=imageRect();val save=c.save();c.scale(zoom,zoom,width/2f,height/2f);val filter=when{night->ColorMatrixColorFilter(floatArrayOf(-1f,0f,0f,0f,255f,0f,-1f,0f,0f,255f,0f,0f,-1f,0f,255f,0f,0f,0f,1f,0f));grayscale->ColorMatrixColorFilter(ColorMatrix().apply{setSaturation(0f)});else->null};paint.colorFilter=filter;paint.alpha=255;c.drawBitmap(b,null,content,paint);paint.colorFilter=null
+            marks.filter{it.page==page}.forEach{m->paint.color=m.color;paint.alpha=m.alpha;c.drawRect(content.left+m.left*content.width(),content.top+m.top*content.height(),content.left+m.right*content.width(),content.top+m.bottom*content.height(),paint)}
+            activeRect?.let{paint.color=colors[chosenColor];paint.alpha=opacity;c.drawRect(it,paint)};c.restoreToCount(save);paint.alpha=255}
+        private fun toImage(x:Float,y:Float):Pair<Float,Float>{val xx=(x-width/2f)/zoom+width/2f;val yy=(y-height/2f)/zoom+height/2f;return Pair((xx-content.left)/content.width().coerceAtLeast(1f),(yy-content.top)/content.height().coerceAtLeast(1f))}
+        override fun onTouchEvent(e:MotionEvent):Boolean{detector.onTouchEvent(e);when(e.actionMasked){MotionEvent.ACTION_DOWN->{downX=e.x;downY=e.y;lastX=e.x;lastY=e.y;longStart=System.currentTimeMillis();selecting=false;parent?.requestDisallowInterceptTouchEvent(true);return true};MotionEvent.ACTION_POINTER_DOWN->{selecting=false;return true};MotionEvent.ACTION_MOVE->{if(e.pointerCount==1&&zoom==1f&&System.currentTimeMillis()-longStart>350){selecting=true;activeRect=RectF(min(downX,e.x),min(downY,e.y),max(downX,e.x),max(downY,e.y));invalidate()};lastX=e.x;lastY=e.y;return true};MotionEvent.ACTION_UP->{if(selecting){val rect=activeRect;activeRect=null;if(rect!=null&&rect.width()>8&&rect.height()>5)addSmartMarks(rect);invalidate()}else if(zoom==1f&&abs(e.x-downX)>70&&abs(e.x-downX)>abs(e.y-downY)*1.3f){showPage(page+if(e.x<downX)1 else -1)}else{val p=toImage(e.x,e.y);val found=marks.lastOrNull{it.page==page&&p.first>=it.left&&p.first<=it.right&&p.second>=it.top&&p.second<=it.bottom};if(found!=null)editMark(found)else{if(renderer!=null){toolbar.visibility=if(toolbar.visibility==VISIBLE)GONE else VISIBLE;openButton.visibility=toolbar.visibility}}};parent?.requestDisallowInterceptTouchEvent(false);return true};MotionEvent.ACTION_CANCEL->{activeRect=null;parent?.requestDisallowInterceptTouchEvent(false);invalidate();return true}};return true}
+        private fun addSmartMarks(r:RectF){val a=toImage(r.left,r.top);val z=toImage(r.right,r.bottom);val l=min(a.first,z.first).coerceIn(0f,1f);val rr=max(a.first,z.first).coerceIn(0f,1f);val t=min(a.second,z.second).coerceIn(0f,1f);val bb=max(a.second,z.second).coerceIn(0f,1f);val b=bitmap?:return;val x1=(l*b.width).toInt().coerceIn(0,b.width-1);val x2=(rr*b.width).toInt().coerceIn(x1+1,b.width);val y1=(t*b.height).toInt().coerceIn(0,b.height-1);val y2=(bb*b.height).toInt().coerceIn(y1+1,b.height);val lines=mutableListOf<Pair<Int,Int>>();var start=-1;for(y in y1 until y2){var dark=0;val step=max(1,(x2-x1)/160);var n=0;var x=x1;while(x<x2){val px=b.getPixel(x,y);if(Color.red(px)<190&&Color.green(px)<190&&Color.blue(px)<190)dark++;n++;x+=step};val ink=dark.toFloat()/max(1,n);if(ink>0.012f){if(start<0)start=y}else if(start>=0){if(y-start>=2)lines.add(Pair(start,y));start=-1}};if(start>=0&&y2-start>=2)lines.add(Pair(start,y2));if(lines.isEmpty())lines.add(Pair(y1,y2));lines.forEach{(top,bottom)->marks.add(Mark(page,l,(top.toFloat()/b.height).coerceIn(0f,1f),rr,(bottom.toFloat()/b.height).coerceIn(0f,1f),colors[chosenColor],opacity))};saveMarks();invalidate();toast("تم حفظ التمييز")}
+        private fun editMark(m:Mark){AlertDialog.Builder(this@MainActivity).setTitle("تعديل التمييز").setItems(arrayOf("تغيير اللون","حذف التمييز")){_,which->if(which==0){AlertDialog.Builder(this@MainActivity).setTitle("اختر اللون").setSingleChoiceItems(colorNames,colors.indexOf(m.color).coerceAtLeast(0)){d,i->m.color=colors[i];saveMarks();invalidate();d.dismiss();showOpacityForMark(m)}.setNegativeButton("إلغاء",null).show()}else{marks.remove(m);saveMarks();invalidate();toast("تم حذف التمييز")}}.setNegativeButton("إلغاء",null).show()}
+        private fun showOpacityForMark(m:Mark){val seek=SeekBar(this@MainActivity).apply{max=80;progress=(m.alpha-25).coerceIn(0,80)};AlertDialog.Builder(this@MainActivity).setTitle("شفافية التمييز").setView(seek).setPositiveButton("حفظ"){_,_->m.alpha=25+seek.progress;saveMarks();invalidate()}.setNegativeButton("إلغاء",null).show()}
     }
 }
