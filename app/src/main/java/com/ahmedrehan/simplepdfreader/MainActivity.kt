@@ -1,20 +1,180 @@
 package com.ahmedrehan.simplepdfreader
 
 import android.app.Activity
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Color
+import android.graphics.pdf.PdfRenderer
 import android.os.Bundle
+import android.os.ParcelFileDescriptor
 import android.view.Gravity
+import android.view.ViewGroup
+import android.widget.Button
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
+import java.io.IOException
 
 class MainActivity : Activity() {
+    private var fileDescriptor: ParcelFileDescriptor? = null
+    private var renderer: PdfRenderer? = null
+    private var currentBitmap: Bitmap? = null
+    private var currentPage = 0
+
+    private lateinit var pageLabel: TextView
+    private lateinit var pageImage: ImageView
+    private lateinit var previousButton: Button
+    private lateinit var nextButton: Button
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val message = TextView(this).apply {
-            text = "Simple PDF Reader\n\nProject setup is ready."
-            textSize = 22f
-            gravity = Gravity.CENTER
-            setPadding(24, 24, 24, 24)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(12, 12, 12, 12)
+            setBackgroundColor(Color.rgb(245, 245, 245))
         }
-        setContentView(message)
+
+        val openButton = Button(this).apply {
+            text = "Open PDF"
+            setOnClickListener { choosePdf() }
+        }
+        root.addView(openButton, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ))
+
+        val controls = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        previousButton = Button(this).apply {
+            text = "Previous"
+            isEnabled = false
+            setOnClickListener { showPage(currentPage - 1) }
+        }
+        nextButton = Button(this).apply {
+            text = "Next"
+            isEnabled = false
+            setOnClickListener { showPage(currentPage + 1) }
+        }
+        pageLabel = TextView(this).apply {
+            text = "No PDF opened"
+            textSize = 15f
+            gravity = Gravity.CENTER
+            setPadding(8, 0, 8, 0)
+        }
+        controls.addView(previousButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        controls.addView(pageLabel, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        controls.addView(nextButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        root.addView(controls)
+
+        pageImage = ImageView(this).apply {
+            adjustViewBounds = true
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setBackgroundColor(Color.WHITE)
+        }
+        val scroll = ScrollView(this).apply {
+            isFillViewport = true
+            addView(pageImage, ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ))
+        }
+        root.addView(scroll, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+        ))
+
+        setContentView(root)
+    }
+
+    private fun choosePdf() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/pdf"
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+        }
+        startActivityForResult(intent, REQUEST_OPEN_PDF)
+    }
+
+    @Deprecated("Deprecated in Android, retained for compatibility with the minimum supported version")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQUEST_OPEN_PDF || resultCode != RESULT_OK) return
+        val uri = data?.data ?: return
+
+        try {
+            data.flags.let { flags ->
+                contentResolver.takePersistableUriPermission(
+                    uri, flags and Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            }
+            closePdf()
+            fileDescriptor = contentResolver.openFileDescriptor(uri, "r")
+                ?: throw IOException("Could not open this PDF file")
+            renderer = PdfRenderer(fileDescriptor!!)
+            currentPage = 0
+            showPage(currentPage)
+        } catch (error: Exception) {
+            closePdf()
+            Toast.makeText(this, "Could not open PDF: ${error.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun showPage(index: Int) {
+        val pdf = renderer ?: return
+        if (index !in 0 until pdf.pageCount) return
+
+        try {
+            val page = pdf.openPage(index)
+            try {
+                val screenWidth = (resources.displayMetrics.widthPixels - 24).coerceAtLeast(320)
+                val maxDimension = 1600
+                val scale = minOf(
+                    screenWidth.toFloat() / page.width,
+                    maxDimension.toFloat() / page.width,
+                    maxDimension.toFloat() / page.height
+                )
+                val bitmapWidth = (page.width * scale).toInt().coerceAtLeast(1)
+                val bitmapHeight = (page.height * scale).toInt().coerceAtLeast(1)
+                val bitmap = Bitmap.createBitmap(bitmapWidth, bitmapHeight, Bitmap.Config.RGB_565)
+                bitmap.eraseColor(Color.WHITE)
+                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+
+                currentBitmap?.recycle()
+                currentBitmap = bitmap
+                pageImage.setImageBitmap(bitmap)
+                currentPage = index
+                pageLabel.text = "${index + 1} / ${pdf.pageCount}"
+                previousButton.isEnabled = index > 0
+                nextButton.isEnabled = index < pdf.pageCount - 1
+            } finally {
+                page.close()
+            }
+        } catch (error: Exception) {
+            Toast.makeText(this, "Could not display page: ${error.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun closePdf() {
+        pageImageOrNull()?.setImageDrawable(null)
+        currentBitmap?.recycle()
+        currentBitmap = null
+        renderer?.close()
+        renderer = null
+        fileDescriptor?.close()
+        fileDescriptor = null
+        currentPage = 0
+    }
+
+    private fun pageImageOrNull(): ImageView? = if (::pageImage.isInitialized) pageImage else null
+
+    override fun onDestroy() {
+        closePdf()
+        super.onDestroy()
+    }
+
+    companion object {
+        private const val REQUEST_OPEN_PDF = 1001
     }
 }
