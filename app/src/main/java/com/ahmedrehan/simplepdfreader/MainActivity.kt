@@ -39,12 +39,14 @@ class MainActivity : Activity() {
     private var fitWidth = true
     private var keepAwake = true
     private var brightness = 0.5f
+    private var originalBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
     private var grayscale = false
 
     data class Mark(val page:Int, val left:Float, val top:Float, val right:Float, val bottom:Float, var color:Int, var alpha:Int)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        originalBrightness = window.attributes.screenBrightness
         soundMode = prefs.getInt("soundMode",1)
         chosenColor = prefs.getInt("color",0)
         opacity = prefs.getInt("opacity",105)
@@ -92,9 +94,9 @@ class MainActivity : Activity() {
     private fun showPage(index:Int){val r=renderer?:return;if(index !in 0 until r.pageCount)return;try{val p=r.openPage(index);val maxSide=1250;val s=min( min(resources.displayMetrics.widthPixels.toFloat()/p.width,maxSide.toFloat()/p.width),maxSide.toFloat()/p.height);val w=max(1,(p.width*s).toInt());val h=max(1,(p.height*s).toInt());val b=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888);b.eraseColor(Color.WHITE);p.render(b,null,null,PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY);p.close();reader.setPage(b);page=index;status.text="${index+1} / ${r.pageCount}";reader.invalidate();openButton.visibility=View.GONE;toolbar.visibility=View.GONE;window.decorView.systemUiVisibility= (View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY)}catch(e:Exception){toast("خطأ في الصفحة: ${e.message}")}}
     private fun closeDocument(){readerOrNull()?.clearPage();renderer?.close();renderer=null;pfd?.close();pfd=null;pageUri=null}
     private fun readerOrNull():ReaderView?=if(::reader.isInitialized)reader else null
-    private fun closeReaderUi(){closeDocument();openButton.visibility=View.VISIBLE;toolbar.visibility=View.VISIBLE;window.decorView.systemUiVisibility=View.SYSTEM_UI_FLAG_VISIBLE;status.text="لم يتم فتح ملف"}
+    private fun closeReaderUi(){closeDocument();val a=window.attributes;a.screenBrightness=originalBrightness;window.attributes=a;openButton.visibility=View.VISIBLE;toolbar.visibility=View.VISIBLE;window.decorView.systemUiVisibility=View.SYSTEM_UI_FLAG_VISIBLE;status.text="لم يتم فتح ملف"}
     override fun onBackPressed(){if(renderer!=null)closeReaderUi() else super.onBackPressed()}
-    override fun onDestroy(){closeDocument();super.onDestroy()}
+    override fun onDestroy(){closeDocument();val a=window.attributes;a.screenBrightness=originalBrightness;window.attributes=a;super.onDestroy()}
     private fun toast(s:String){Toast.makeText(this,s,Toast.LENGTH_SHORT).show()}
     private fun loadMarks(key:String){marks.clear();try{val a=JSONArray(prefs.getString("marks:"+key,"[]"));for(i in 0 until a.length()){val o=a.getJSONObject(i);marks.add(Mark(o.getInt("p"),o.getDouble("l").toFloat(),o.getDouble("t").toFloat(),o.getDouble("r").toFloat(),o.getDouble("b").toFloat(),o.getInt("c"),o.getInt("a")))}}catch(_:Exception){}}
     private fun saveMarks(){val key=pageUri?.toString()?:return;val a=JSONArray();marks.forEach{m->a.put(JSONObject().put("p",m.page).put("l",m.left.toDouble()).put("t",m.top.toDouble()).put("r",m.right.toDouble()).put("b",m.bottom.toDouble()).put("c",m.color).put("a",m.alpha))};prefs.edit().putString("marks:"+key,a.toString()).apply()}
