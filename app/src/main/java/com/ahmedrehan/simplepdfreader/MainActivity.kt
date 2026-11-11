@@ -196,10 +196,22 @@ class MainActivity : Activity() {
                 }
             })
 
+        override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+            // Prevent the parent ScrollView from intercepting a two-finger pinch.
+            if (event.pointerCount > 1 || scaleDetector.isInProgress) {
+                parent?.requestDisallowInterceptTouchEvent(true)
+            }
+            val handled = super.dispatchTouchEvent(event)
+            if (event.actionMasked == MotionEvent.ACTION_UP ||
+                event.actionMasked == MotionEvent.ACTION_CANCEL) {
+                parent?.requestDisallowInterceptTouchEvent(false)
+            }
+            return handled
+        }
+
         override fun onTouchEvent(event: MotionEvent): Boolean {
             scaleDetector.onTouchEvent(event)
-            if (event.pointerCount > 1 || scaleDetector.isInProgress) return true
-            return super.onTouchEvent(event)
+            return true
         }
 
         fun resetZoom() {
