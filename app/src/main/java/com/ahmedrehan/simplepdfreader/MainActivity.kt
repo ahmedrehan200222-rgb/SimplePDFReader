@@ -37,7 +37,7 @@ class MainActivity : Activity() {
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(12, 12, 12, 12)
+            setPadding(0, 4, 0, 0)
             setBackgroundColor(Color.rgb(245, 245, 245))
         }
 
@@ -137,7 +137,7 @@ class MainActivity : Activity() {
         try {
             val page = pdf.openPage(index)
             try {
-                val screenWidth = (resources.displayMetrics.widthPixels - 24).coerceAtLeast(320)
+                val screenWidth = resources.displayMetrics.widthPixels.coerceAtLeast(320)
                 val maxDimension = 1200
                 val scale = minOf(
                     screenWidth.toFloat() / page.width,
