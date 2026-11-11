@@ -77,7 +77,9 @@ class MainActivity : Activity() {
         controls.addView(nextButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         root.addView(controls)
 
-        pageImage = ZoomableImageView(this).apply {
+        pageImage = ZoomableImageView(this) { next ->
+            showPage(currentPage + if (next) 1 else -1)
+        }.apply {
             adjustViewBounds = true
             setOnClickListener { toggleReaderControls() }
             scaleType = ImageView.ScaleType.FIT_CENTER
@@ -202,8 +204,13 @@ class MainActivity : Activity() {
         super.onDestroy()
     }
 
-    private class ZoomableImageView(context: android.content.Context) : ImageView(context) {
+    private class ZoomableImageView(
+        context: android.content.Context,
+        private val onSwipe: (Boolean) -> Unit
+    ) : ImageView(context) {
         private var scaleFactor = 1f
+        private var downX = 0f
+        private var downY = 0f
         private val scaleDetector = ScaleGestureDetector(context,
             object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
                 override fun onScale(detector: ScaleGestureDetector): Boolean {
@@ -215,10 +222,27 @@ class MainActivity : Activity() {
             })
 
         override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+            // Record a one-finger gesture for page navigation.
+            if (event.actionMasked == MotionEvent.ACTION_DOWN && event.pointerCount == 1) {
+                downX = event.x
+                downY = event.y
+            }
+
             // Prevent the parent ScrollView from intercepting a two-finger pinch.
             if (event.pointerCount > 1 || scaleDetector.isInProgress) {
                 parent?.requestDisallowInterceptTouchEvent(true)
             }
+
+            if (event.actionMasked == MotionEvent.ACTION_UP && scaleFactor <= 1.05f) {
+                val dx = event.x - downX
+                val dy = event.y - downY
+                val threshold = 72f * resources.displayMetrics.density
+                if (kotlin.math.abs(dx) > threshold &&
+                    kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.3f) {
+                    onSwipe(dx < 0)
+                }
+            }
+
             val handled = super.dispatchTouchEvent(event)
             if (event.actionMasked == MotionEvent.ACTION_UP ||
                 event.actionMasked == MotionEvent.ACTION_CANCEL) {
