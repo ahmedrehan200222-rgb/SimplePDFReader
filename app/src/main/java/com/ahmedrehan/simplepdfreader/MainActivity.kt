@@ -2,12 +2,15 @@ package com.ahmedrehan.simplepdfreader
 
 import android.app.Activity
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.pdf.PdfRenderer
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import android.view.Gravity
+import android.view.MotionEvent
+import android.view.ScaleGestureDetector
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.FrameLayout
@@ -25,7 +28,7 @@ class MainActivity : Activity() {
     private var currentPage = 0
 
     private lateinit var pageLabel: TextView
-    private lateinit var pageImage: ImageView
+    private lateinit var pageImage: ZoomableImageView
     private lateinit var previousButton: Button
     private lateinit var nextButton: Button
 
@@ -71,7 +74,7 @@ class MainActivity : Activity() {
         controls.addView(nextButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         root.addView(controls)
 
-        pageImage = ImageView(this).apply {
+        pageImage = ZoomableImageView(this).apply {
             adjustViewBounds = true
             scaleType = ImageView.ScaleType.FIT_CENTER
             setBackgroundColor(Color.WHITE)
@@ -87,6 +90,11 @@ class MainActivity : Activity() {
         ))
 
         setContentView(root)
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (renderer != null) showPage(currentPage)
     }
 
     private fun choosePdf() {
@@ -144,6 +152,7 @@ class MainActivity : Activity() {
 
                 currentBitmap?.recycle()
                 currentBitmap = bitmap
+                pageImage.resetZoom()
                 pageImage.setImageBitmap(bitmap)
                 currentPage = index
                 pageLabel.text = "${index + 1} / ${pdf.pageCount}"
@@ -173,6 +182,31 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         closePdf()
         super.onDestroy()
+    }
+
+    private class ZoomableImageView(context: android.content.Context) : ImageView(context) {
+        private var scaleFactor = 1f
+        private val scaleDetector = ScaleGestureDetector(context,
+            object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+                override fun onScale(detector: ScaleGestureDetector): Boolean {
+                    scaleFactor = (scaleFactor * detector.scaleFactor).coerceIn(1f, 4f)
+                    scaleX = scaleFactor
+                    scaleY = scaleFactor
+                    return true
+                }
+            })
+
+        override fun onTouchEvent(event: MotionEvent): Boolean {
+            scaleDetector.onTouchEvent(event)
+            if (event.pointerCount > 1 || scaleDetector.isInProgress) return true
+            return super.onTouchEvent(event)
+        }
+
+        fun resetZoom() {
+            scaleFactor = 1f
+            scaleX = 1f
+            scaleY = 1f
+        }
     }
 
     companion object {
