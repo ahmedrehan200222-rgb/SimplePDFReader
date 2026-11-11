@@ -31,6 +31,8 @@ class MainActivity : Activity() {
     private lateinit var pageImage: ZoomableImageView
     private lateinit var previousButton: Button
     private lateinit var nextButton: Button
+    private lateinit var openButton: Button
+    private lateinit var controls: LinearLayout
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -41,7 +43,7 @@ class MainActivity : Activity() {
             setBackgroundColor(Color.rgb(245, 245, 245))
         }
 
-        val openButton = Button(this).apply {
+        openButton = Button(this).apply {
             text = "Open PDF"
             setOnClickListener { choosePdf() }
         }
@@ -49,7 +51,7 @@ class MainActivity : Activity() {
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ))
 
-        val controls = LinearLayout(this).apply {
+        controls = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
         }
@@ -76,6 +78,7 @@ class MainActivity : Activity() {
 
         pageImage = ZoomableImageView(this).apply {
             adjustViewBounds = true
+            setOnClickListener { toggleReaderControls() }
             scaleType = ImageView.ScaleType.FIT_CENTER
             setBackgroundColor(Color.WHITE)
         }
@@ -155,6 +158,9 @@ class MainActivity : Activity() {
                 pageImage.resetZoom()
                 pageImage.setImageBitmap(bitmap)
                 currentPage = index
+                openButton.visibility = ViewGroup.GONE
+                controls.visibility = ViewGroup.GONE
+                window.decorView.systemUiVisibility = (View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION)
                 pageLabel.text = "${index + 1} / ${pdf.pageCount}"
                 previousButton.isEnabled = index > 0
                 nextButton.isEnabled = index < pdf.pageCount - 1
@@ -166,7 +172,18 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun toggleReaderControls() {
+        if (renderer == null) return
+        val visible = controls.visibility != ViewGroup.VISIBLE
+        controls.visibility = if (visible) ViewGroup.VISIBLE else ViewGroup.GONE
+        openButton.visibility = if (visible) ViewGroup.VISIBLE else ViewGroup.GONE
+    }
+
     private fun closePdf() {
+        if (::openButton.isInitialized) openButton.visibility = ViewGroup.VISIBLE
+        if (::controls.isInitialized) controls.visibility = ViewGroup.VISIBLE
+        window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE
+
         pageImageOrNull()?.setImageDrawable(null)
         currentBitmap?.recycle()
         currentBitmap = null
