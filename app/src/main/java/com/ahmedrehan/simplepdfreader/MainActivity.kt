@@ -60,43 +60,28 @@ class MainActivity : Activity() {
         opacity = prefs.getInt("opacity",55)
         night = prefs.getBoolean("night",false)
         keepAwake = prefs.getBoolean("awake",true)
-        root = LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setBackgroundColor(Color.rgb(245,245,245)) }
+        root = LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setBackgroundColor(0xFF181C24.toInt()) }
         openButton = Button(this).apply { text="فتح ملف PDF"; setOnClickListener { choosePdf() } }
         root.addView(openButton, LinearLayout.LayoutParams(-1,-2))
-        toolbar = LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setPadding(3,0,3,3) }
-        val row1=LinearLayout(this).apply { gravity=Gravity.CENTER }
-        row1.addView(button("السابق"){showPage(page-1)},LinearLayout.LayoutParams(0,-2,1f))
-        status=TextView(this).apply { text="لم يتم فتح ملف"; gravity=Gravity.CENTER; textSize=14f }
-        row1.addView(status,LinearLayout.LayoutParams(0,-2,1f))
-        row1.addView(button("التالي"){showPage(page+1)},LinearLayout.LayoutParams(0,-2,1f))
-        toolbar.addView(row1)
-        val row2=LinearLayout(this).apply { gravity=Gravity.CENTER }
-        row2.addView(button("تمييز"){showHighlightHelp()},LinearLayout.LayoutParams(0,-2,1f))
-        row2.addView(button("الألوان"){showColorSettings()},LinearLayout.LayoutParams(0,-2,1f))
-        row2.addView(button("علامة صفحة"){toggleBookmark()},LinearLayout.LayoutParams(0,-2,1f))
-        row2.addView(button("تراجع"){undo()},LinearLayout.LayoutParams(0,-2,1f))
-        row2.addView(button("إعدادات"){showSettings()},LinearLayout.LayoutParams(0,-2,1f))
-        toolbar.addView(row2)
-        val row3=LinearLayout(this).apply { gravity=Gravity.CENTER }
-        row3.addView(button("وضع الماوس"){setMouseMode()},LinearLayout.LayoutParams(0,-2,1f))
-        row3.addView(button("وضع التمييز"){setHighlightMode()},LinearLayout.LayoutParams(0,-2,1f))
-        row3.addView(button("انتقال سريع"){showQuickPageDialog()},LinearLayout.LayoutParams(0,-2,1f))
-        toolbar.addView(row3)
-        val row4=LinearLayout(this).apply { gravity=Gravity.CENTER }
-        row4.addView(button("ليلي"){night=!night; prefs.edit().putBoolean("night",night).apply(); reader.invalidate()},LinearLayout.LayoutParams(0,-2,1f))
-        row4.addView(button("أبيض وأسود"){grayscale=!grayscale; reader.invalidate()},LinearLayout.LayoutParams(0,-2,1f))
-        row4.addView(button("ملاءمة العرض"){fitWidth=!fitWidth; reader.invalidate()},LinearLayout.LayoutParams(0,-2,1f))
-        toolbar.addView(row4)
-        val row5=LinearLayout(this).apply { gravity=Gravity.CENTER }
-        row5.addView(button("الصفحات"){toggleThumbnails()},LinearLayout.LayoutParams(0,-2,1f))
-        row5.addView(button("عنوان الصفحة"){editPageTitle()},LinearLayout.LayoutParams(0,-2,1f))
-        row5.addView(button("تعليق"){editPageComment()},LinearLayout.LayoutParams(0,-2,1f))
-        row5.addView(button("مربع نص"){addTextBox()},LinearLayout.LayoutParams(0,-2,1f))
-        row5.addView(button("بحث"){searchNotes()},LinearLayout.LayoutParams(0,-2,1f))
-        toolbar.addView(row5)
-        root.addView(toolbar)
-        reader=ReaderView()
-        root.addView(reader,LinearLayout.LayoutParams(-1,0,1f))
+        val readerFrame = FrameLayout(this)
+        reader = ReaderView()
+        readerFrame.addView(reader, FrameLayout.LayoutParams(-1,-1))
+        toolbar = LinearLayout(this).apply { orientation=LinearLayout.HORIZONTAL; gravity=Gravity.CENTER_VERTICAL; setPadding(4,3,4,3); setBackgroundColor(0xEE202733.toInt()) }
+        val compact=LinearLayout(this).apply { orientation=LinearLayout.HORIZONTAL; gravity=Gravity.CENTER_VERTICAL }
+        compact.addView(button("‹"){showPage(page-1)},LinearLayout.LayoutParams(42,-2))
+        status=TextView(this).apply { text="لم يتم فتح ملف"; gravity=Gravity.CENTER; textSize=12f; setTextColor(Color.WHITE) }
+        compact.addView(status,LinearLayout.LayoutParams(0,-2,1f))
+        compact.addView(button("›"){showPage(page+1)},LinearLayout.LayoutParams(42,-2))
+        compact.addView(button("⋮"){showMoreOptions()},LinearLayout.LayoutParams(42,-2))
+        toolbar.addView(compact,LinearLayout.LayoutParams(-1,-2))
+        readerFrame.addView(toolbar,FrameLayout.LayoutParams(-1,-2,Gravity.TOP))
+        val rail=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; gravity=Gravity.CENTER; setPadding(3,6,3,6); background=android.graphics.drawable.GradientDrawable().apply { setColor(0xEE202733.toInt()); cornerRadius=18f } }
+        fun tool(label:String,action:()->Unit)=Button(this).apply { text=label; textSize=10f; minHeight=42; minWidth=42; setPadding(2,0,2,0); setTextColor(Color.WHITE); setBackgroundColor(0xFF344052.toInt()); setOnClickListener { action() } }
+        rail.addView(tool("🖱"){setMouseMode()})
+        rail.addView(tool("🖍"){if(renderer!=null)showHighlightStyles() else toast("افتح ملف PDF أولاً")})
+        rail.addView(tool("⌫"){setEraserMode()})
+        readerFrame.addView(rail,FrameLayout.LayoutParams(48,-2,Gravity.START or Gravity.CENTER_VERTICAL).apply { leftMargin=4 })
+        root.addView(readerFrame,LinearLayout.LayoutParams(-1,0,1f))
         setContentView(root)
         if(keepAwake) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         val last=prefs.getString("lastUri",null)
