@@ -196,12 +196,8 @@ class MainActivity : Activity() {
                     }else{
                         val p=toImage(e.x,e.y)
                         val found=marks.lastOrNull{it.page==page&&p.first>=it.left&&p.first<=it.right&&p.second>=it.top&&p.second<=it.bottom}
-                        if(interactionMode==1){
-                            if(found==null)addLineAt(e.x,e.y)
-                        }else{
-                            if(found!=null){rememberUndo();marks.remove(found);saveMarks();invalidate();toast("تم مسح التمييز")}
-                            else if(renderer!=null){toolbar.visibility=if(toolbar.visibility==VISIBLE)GONE else VISIBLE;openButton.visibility=toolbar.visibility}
-                        }
+                        if(interactionMode==1){ if(found==null)addLineAt(e.x,e.y) }
+                        else if(found!=null){editMark(found)}
                     }
                     parent?.requestDisallowInterceptTouchEvent(false);return true
                 }
