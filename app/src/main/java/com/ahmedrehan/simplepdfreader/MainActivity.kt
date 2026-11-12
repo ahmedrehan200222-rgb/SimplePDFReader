@@ -223,7 +223,75 @@ class MainActivity : Activity() {
             val rect=RectF(content.left,content.top+top.toFloat()/b.height*content.height(),content.right,content.top+bottom.toFloat()/b.height*content.height())
             addSmartMarks(rect)
         }
-        private fun addSmartMarks(r:RectF){val a=toImage(r.left,r.top);val z=toImage(r.right,r.bottom);val l=min(a.first,z.first).coerceIn(0f,1f);val rr=max(a.first,z.first).coerceIn(0f,1f);val t=min(a.second,z.second).coerceIn(0f,1f);val bb=max(a.second,z.second).coerceIn(0f,1f);val b=bitmap?:return;val x1=(l*b.width).toInt().coerceIn(0,b.width-1);val x2=(rr*b.width).toInt().coerceIn(x1+1,b.width);val y1=(t*b.height).toInt().coerceIn(0,b.height-1);val y2=(bb*b.height).toInt().coerceIn(y1+1,b.height);val lines=mutableListOf<Pair<Int,Int>>();var start=-1;for(y in y1 until y2){var dark=0;val step=max(1,(x2-x1)/160);var n=0;var x=x1;while(x<x2){val px=b.getPixel(x,y);if(Color.red(px)<190&&Color.green(px)<190&&Color.blue(px)<190)dark++;n++;x+=step};val ink=dark.toFloat()/max(1,n);if(ink>0.012f){if(start<0)start=y}else if(start>=0){if(y-start>=2)lines.add(Pair(start,y));start=-1}};if(start>=0&&y2-start>=2)lines.add(Pair(start,y2));if(lines.isEmpty())lines.add(Pair(y1,y2));rememberUndo();lines.forEach{(top,bottom)->marks.add(Mark(page,l,(top.toFloat()/b.height).coerceIn(0f,1f),rr,(bottom.toFloat()/b.height).coerceIn(0f,1f),colors[chosenColor],opacity))};saveMarks();invalidate();toast("تم حفظ التمييز")}
+        // Detect text rows and word-like horizontal groups from the rendered page.
+        // This is image geometry, not OCR, so it works offline and keeps memory use low.
+        private fun addSmartMarks(r:RectF){
+            val b=bitmap?:return
+            val a=toImage(r.left,r.top);val z=toImage(r.right,r.bottom)
+            val sx1=(min(a.first,z.first)*b.width).toInt().coerceIn(0,b.width-1)
+            val sx2=(max(a.first,z.first)*b.width).toInt().coerceIn(sx1+1,b.width)
+            var sy1=(min(a.second,z.second)*b.height).toInt().coerceIn(0,b.height-1)
+            var sy2=(max(a.second,z.second)*b.height).toInt().coerceIn(sy1+1,b.height)
+            val inkThreshold=178
+            fun dark(x:Int,y:Int):Boolean{
+                val px=b.getPixel(x,y)
+                return (Color.red(px)*30+Color.green(px)*59+Color.blue(px)*11)/100 < inkThreshold
+            }
+            val rows=ArrayList<Int>()
+            val rowThreshold=max(1,((sx2-sx1)*0.0015f).toInt())
+            for(y in sy1 until sy2){
+                var count=0;var x=sx1
+                while(x<sx2){if(dark(x,y))count++;x+=2}
+                if(count>=rowThreshold)rows.add(y)
+            }
+            // A short gesture snaps to the nearest printed line.
+            if(rows.isEmpty()){
+                val cy=((sy1+sy2)/2).coerceIn(0,b.height-1)
+                var best=-1;var bestCount=0
+                for(y in max(0,cy-28)..min(b.height-1,cy+28)){
+                    var count=0;var x=sx1
+                    while(x<sx2){if(dark(x,y))count++;x+=2}
+                    if(count>bestCount){bestCount=count;best=y}
+                }
+                if(best>=0&&bestCount>0){
+                    sy1=max(0,best-12);sy2=min(b.height,best+13)
+                    for(y in sy1 until sy2){var count=0;var x=sx1;while(x<sx2){if(dark(x,y))count++;x+=2};if(count>=rowThreshold)rows.add(y)}
+                }
+            }
+            if(rows.isEmpty()){toast("قرّب التحديد من الكلام وحاول تاني");return}
+            val lines=mutableListOf<Pair<Int,Int>>()
+            var lineStart=rows.first();var previous=rows.first()
+            for(y in rows.drop(1)){if(y-previous>5){lines.add(Pair(lineStart,previous+1));lineStart=y};previous=y}
+            lines.add(Pair(lineStart,previous+1))
+            val detected=mutableListOf<Mark>()
+            val wordGap=max(4,(b.width*0.0045f).toInt())
+            for((top0,bottom0) in lines){
+                val top=max(0,top0-2);val bottom=min(b.height,bottom0+3)
+                val columnThreshold=max(1,((bottom-top)*0.035f).toInt())
+                val occupied=ArrayList<Int>()
+                for(x in 0 until b.width){
+                    var count=0;var y=top
+                    while(y<bottom){if(dark(x,y))count++;y+=2}
+                    if(count>=columnThreshold)occupied.add(x)
+                }
+                if(occupied.isEmpty())continue
+                val runs=mutableListOf<Pair<Int,Int>>()
+                var left=occupied.first();var prev=left
+                for(x in occupied.drop(1)){if(x-prev>wordGap){runs.add(Pair(left,prev+1));left=x};prev=x}
+                runs.add(Pair(left,prev+1))
+                for((wl,wr) in runs){
+                    if(wr<sx1||wl>sx2)continue
+                    val l=max(0,wl-2).toFloat()/b.width
+                    val rr=min(b.width,wr+2).toFloat()/b.width
+                    val t=top.toFloat()/b.height
+                    val bb=bottom.toFloat()/b.height
+                    if(rr>l&&bb>t)detected.add(Mark(page,l,t,rr,bb,colors[chosenColor],opacity))
+                }
+            }
+            if(detected.isEmpty()){toast("مش قادر أحدد كلمات واضحة في المنطقة دي");return}
+            rememberUndo();marks.addAll(detected);saveMarks();invalidate()
+            toast("تم تمييز "+detected.size+" جزء من النص")
+        }
         private fun editMark(m:Mark){AlertDialog.Builder(this@MainActivity).setTitle("تعديل التمييز").setItems(arrayOf("تغيير اللون","حذف التمييز")){_,which->if(which==0){AlertDialog.Builder(this@MainActivity).setTitle("اختر اللون").setSingleChoiceItems(colorNames,colors.indexOf(m.color).coerceAtLeast(0)){d,i->rememberUndo();m.color=colors[i];saveMarks();invalidate();d.dismiss();showOpacityForMark(m)}.setNegativeButton("إلغاء",null).show()}else{rememberUndo();marks.remove(m);saveMarks();invalidate();toast("تم حذف التمييز")}}.setNegativeButton("إلغاء",null).show()}
         private fun showOpacityForMark(m:Mark){val seek=SeekBar(this@MainActivity).apply{max=80;progress=(m.alpha-10).coerceIn(0,80)};AlertDialog.Builder(this@MainActivity).setTitle("شفافية التمييز").setView(seek).setPositiveButton("حفظ"){_,_->rememberUndo();m.alpha=10+seek.progress;saveMarks();invalidate()}.setNegativeButton("إلغاء",null).show()}
     }
