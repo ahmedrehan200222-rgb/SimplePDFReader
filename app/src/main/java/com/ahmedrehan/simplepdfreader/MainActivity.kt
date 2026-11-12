@@ -481,13 +481,13 @@ class MainActivity : Activity(), ReaderHost {
         home.visibility = View.GONE
         readerRoot.visibility = View.VISIBLE
         setChrome(true)
-        setImmersive(true)
+        applyImmersive(true)
     }
 
     private fun showHomeUi() {
         readerRoot.visibility = View.GONE
         home.visibility = View.VISIBLE
-        setImmersive(false)
+        applyImmersive(false)
         refreshHome()
     }
 
@@ -500,7 +500,7 @@ class MainActivity : Activity(), ReaderHost {
     }
 
     @Suppress("DEPRECATION")
-    private fun setImmersive(on: Boolean) {
+    private fun applyImmersive(on: Boolean) {
         window.decorView.systemUiVisibility = if (on) {
             View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
         } else {
@@ -510,7 +510,7 @@ class MainActivity : Activity(), ReaderHost {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus && doc != null) setImmersive(true)
+        if (hasFocus && doc != null) applyImmersive(true)
     }
 
     /** بيرسم الصفحة في خيط خلفي عشان الجهاز مايتعلّقش، وبيستبدل الصفحة لما تخلص. */
