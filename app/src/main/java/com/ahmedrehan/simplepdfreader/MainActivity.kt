@@ -127,9 +127,12 @@ class MainActivity : Activity() {
             12->showSettings()
         }}.show()
     }
-    private fun showHighlightHelp(){setHighlightMode()}
-    private fun setHighlightMode(){if(renderer==null){toast("افتح ملف PDF أولاً");return};interactionMode=1;toast("وضع التمييز: اضغط على سطر لتمييزه أو اسحب على جزء محدد")}
-    private fun setMouseMode(){interactionMode=0;toast("وضع الماوس: اسحب للتنقل بين الصفحات واضغط على التمييز لمسحه")}
+    private var highlightStyle = 0
+    private fun showHighlightHelp(){showHighlightStyles()}
+    private fun showHighlightStyles(){AlertDialog.Builder(this).setTitle("طريقة التمييز").setSingleChoiceItems(arrayOf("تمييز ذكي للجملة كاملة","فرشاة حرة بخطوط مستقيمة"),highlightStyle){d,w->highlightStyle=w;setHighlightMode();d.dismiss()}.setNegativeButton("إلغاء",null).show()}
+    private fun setHighlightMode(){if(renderer==null){toast("افتح ملف PDF أولاً");return};interactionMode=1;toast(if(highlightStyle==0)"وضع تمييز الجمل: اسحب فوق السطر" else "وضع الفرشاة: اسحب لرسم خطوط مستقيمة")}
+    private fun setMouseMode(){interactionMode=0;toast("وضع الماوس: اضغط على التمييز لعرض خياراته")}
+    private fun setEraserMode(){if(renderer==null){toast("افتح ملف PDF أولاً");return};interactionMode=2;toast("الممحاة: اضغط على تمييز أو مربع نص لحذفه")}
     private fun showQuickPageDialog(){
         val r=renderer?:run{toast("افتح ملف PDF أولاً");return}
         val box=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(24,12,24,4)}
