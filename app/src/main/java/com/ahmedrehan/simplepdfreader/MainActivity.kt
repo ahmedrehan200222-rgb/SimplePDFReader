@@ -325,8 +325,8 @@ class MainActivity : Activity(), ReaderHost {
         }
         tool("الصفحات") { showPages(false) }
         tool("بحث") { showPages(true) }
-        hlBtn = tool("تمييز") { setMode(if (mode == 1) 0 else 1) }
-        erBtn = tool("ممحاة") { setMode(if (mode == 2) 0 else 2) }
+        hlBtn = tool("تمييز") { switchMode(if (mode == 1) 0 else 1) }
+        erBtn = tool("ممحاة") { switchMode(if (mode == 2) 0 else 2) }
         tool("وسم وتعليق") { editPageInfo(currentPage) }
         val tp = lp(-1, -2)
         tp.topMargin = dp(4)
@@ -365,7 +365,7 @@ class MainActivity : Activity(), ReaderHost {
         rightNav.setOnClickListener { turnPage(if (rtlBook) -1 else 1) }
     }
 
-    private fun setMode(m: Int) {
+    private fun switchMode(m: Int) {
         mode = m
         styleButton(hlBtn, m == 1)
         styleButton(erBtn, m == 2)
