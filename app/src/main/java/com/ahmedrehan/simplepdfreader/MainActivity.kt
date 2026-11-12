@@ -163,6 +163,9 @@ class MainActivity : Activity() {
         private var downX=0f;private var downY=0f;private var lastX=0f;private var lastY=0f
         private var selecting=false;private var longStart=0L
         private var activeRect:RectF?=null
+        private var brushDrawing=false
+        private var brushLast:Pair<Float,Float>?=null
+        private val pendingBrush=mutableListOf<Mark>()
         private val detector=ScaleGestureDetector(this@MainActivity,object:ScaleGestureDetector.SimpleOnScaleGestureListener(){override fun onScale(d:ScaleGestureDetector):Boolean{val old=zoom;val next=(zoom*d.scaleFactor).coerceIn(1f,4f);val factor=next/old;panX=d.focusX-(d.focusX-panX)*factor;panY=d.focusY-(d.focusY-panY)*factor;zoom=next;clampPan();invalidate();return true}})
         private val paint=Paint(Paint.ANTI_ALIAS_FLAG)
         private var content=RectF()
@@ -177,17 +180,19 @@ class MainActivity : Activity() {
         override fun onTouchEvent(e:MotionEvent):Boolean{
             detector.onTouchEvent(e)
             when(e.actionMasked){
-                MotionEvent.ACTION_DOWN->{downX=e.x;downY=e.y;lastX=e.x;lastY=e.y;longStart=System.currentTimeMillis();selecting=false;parent?.requestDisallowInterceptTouchEvent(true);return true}
+                MotionEvent.ACTION_DOWN->{downX=e.x;downY=e.y;lastX=e.x;lastY=e.y;longStart=System.currentTimeMillis();selecting=false;brushDrawing=interactionMode==1&&highlightStyle==1&&zoom==1f;brushLast=if(brushDrawing)toImage(e.x,e.y)else null;pendingBrush.clear();parent?.requestDisallowInterceptTouchEvent(true);return true}
                 MotionEvent.ACTION_POINTER_DOWN->{selecting=false;return true}
                 MotionEvent.ACTION_MOVE->{
                     if(zoom>1f&&e.pointerCount==1&&!selecting){panX+=e.x-lastX;panY+=e.y-lastY;clampPan();invalidate();lastX=e.x;lastY=e.y;return true}
-                    if(interactionMode==1&&e.pointerCount==1&&zoom==1f&&System.currentTimeMillis()-longStart>250){
+                    if(brushDrawing&&e.pointerCount==1){val now=toImage(e.x,e.y);val prev=brushLast;if(prev!=null&&abs(now.first-prev.first)+abs(now.second-prev.second)>0.002f)pendingBrush.add(Mark(page,prev.first,prev.second,now.first,now.second,colors[chosenColor],opacity,true));brushLast=now;lastX=e.x;lastY=e.y;invalidate();return true}
+                    if(interactionMode==1&&highlightStyle==0&&e.pointerCount==1&&zoom==1f&&System.currentTimeMillis()-longStart>250){
                         selecting=true;activeRect=RectF(min(downX,e.x),min(downY,e.y),max(downX,e.x),max(downY,e.y));invalidate()
                     }
                     lastX=e.x;lastY=e.y;return true
                 }
                 MotionEvent.ACTION_UP->{
-                    if(selecting){
+                    if(brushDrawing){finishBrush(e.x,e.y);brushDrawing=false;brushLast=null;invalidate()}
+                    else if(selecting){
                         val rect=activeRect;activeRect=null
                         if(rect!=null&&rect.width()>8&&rect.height()>5)addSmartMarks(rect)
                         invalidate()
@@ -205,10 +210,11 @@ class MainActivity : Activity() {
                     }
                     parent?.requestDisallowInterceptTouchEvent(false);return true
                 }
-                MotionEvent.ACTION_CANCEL->{activeRect=null;parent?.requestDisallowInterceptTouchEvent(false);invalidate();return true}
+                MotionEvent.ACTION_CANCEL->{activeRect=null;brushDrawing=false;brushLast=null;pendingBrush.clear();parent?.requestDisallowInterceptTouchEvent(false);invalidate();return true}
             }
             return true
         }
+        private fun finishBrush(x:Float,y:Float){val end=toImage(x,y);val prev=brushLast;if(prev!=null&&abs(end.first-prev.first)+abs(end.second-prev.second)>0.001f)pendingBrush.add(Mark(page,prev.first,prev.second,end.first,end.second,colors[chosenColor],opacity,true));if(pendingBrush.isNotEmpty()){rememberUndo();marks.addAll(pendingBrush);saveMarks();refreshThumbnails();toast("تم حفظ الفرشاة")};pendingBrush.clear()}
         private fun clampPan(){val r=imageRect();val minX=width-r.right*zoom;val maxX=-r.left*zoom;val minY=height-r.bottom*zoom;val maxY=-r.top*zoom;panX=if(zoom<=1f)0f else panX.coerceIn(minX.coerceAtMost(maxX),maxX.coerceAtLeast(minX));panY=if(zoom<=1f)0f else panY.coerceIn(minY.coerceAtMost(maxY),maxY.coerceAtLeast(minY))}
         private fun addLineAt(x:Float,y:Float){
             val b=bitmap?:return
