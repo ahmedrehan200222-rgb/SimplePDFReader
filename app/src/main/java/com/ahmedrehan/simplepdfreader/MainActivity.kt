@@ -42,6 +42,8 @@ class MainActivity : Activity() {
     private var brightness = 0.5f
     private var originalBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
     private var grayscale = false
+    // 0 = mouse/navigation, 1 = highlight
+    private var interactionMode = 0
 
     data class Mark(val page:Int, val left:Float, val top:Float, val right:Float, val bottom:Float, var color:Int, var alpha:Int)
 
@@ -71,10 +73,15 @@ class MainActivity : Activity() {
         row2.addView(button("إعدادات"){showSettings()},LinearLayout.LayoutParams(0,-2,1f))
         toolbar.addView(row2)
         val row3=LinearLayout(this).apply { gravity=Gravity.CENTER }
-        row3.addView(button("ليلي"){night=!night; prefs.edit().putBoolean("night",night).apply(); reader.invalidate()},LinearLayout.LayoutParams(0,-2,1f))
-        row3.addView(button("أبيض وأسود"){grayscale=!grayscale; reader.invalidate()},LinearLayout.LayoutParams(0,-2,1f))
-        row3.addView(button("ملاءمة العرض"){fitWidth=!fitWidth; reader.invalidate()},LinearLayout.LayoutParams(0,-2,1f))
+        row3.addView(button("وضع الماوس"){setMouseMode()},LinearLayout.LayoutParams(0,-2,1f))
+        row3.addView(button("وضع التمييز"){setHighlightMode()},LinearLayout.LayoutParams(0,-2,1f))
+        row3.addView(button("انتقال سريع"){showQuickPageDialog()},LinearLayout.LayoutParams(0,-2,1f))
         toolbar.addView(row3)
+        val row4=LinearLayout(this).apply { gravity=Gravity.CENTER }
+        row4.addView(button("ليلي"){night=!night; prefs.edit().putBoolean("night",night).apply(); reader.invalidate()},LinearLayout.LayoutParams(0,-2,1f))
+        row4.addView(button("أبيض وأسود"){grayscale=!grayscale; reader.invalidate()},LinearLayout.LayoutParams(0,-2,1f))
+        row4.addView(button("ملاءمة العرض"){fitWidth=!fitWidth; reader.invalidate()},LinearLayout.LayoutParams(0,-2,1f))
+        toolbar.addView(row4)
         root.addView(toolbar)
         reader=ReaderView()
         root.addView(reader,LinearLayout.LayoutParams(-1,0,1f))
@@ -90,7 +97,7 @@ class MainActivity : Activity() {
     override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?){super.onActivityResult(requestCode,resultCode,data);if(requestCode==77&&resultCode==RESULT_OK){val u=data?.data?:return;try{contentResolver.takePersistableUriPermission(u,data.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION);openUri(u,true)}catch(e:Exception){toast("تعذر فتح الملف: ${e.message}")}}}
     private fun openUri(uri:Uri,save:Boolean){
         try{closeDocument();pfd=contentResolver.openFileDescriptor(uri,"r")?:throw IOException("ملف غير متاح");renderer=PdfRenderer(pfd!!);pageUri=uri;page=0
-            val key=uri.toString();loadMarks(key);if(save)prefs.edit().putString("lastUri",key).apply();showPage(0)
+            undoStack.clear();val key=uri.toString();loadMarks(key);if(save)prefs.edit().putString("lastUri",key).apply();showPage(0)
         }catch(e:Exception){toast("تعذر فتح PDF: ${e.message}")}
     }
     private fun showPage(index:Int){val r=renderer?:return;if(index !in 0 until r.pageCount)return;try{val p=r.openPage(index);val maxSide=1250;val s=min( min(resources.displayMetrics.widthPixels.toFloat()/p.width,maxSide.toFloat()/p.width),maxSide.toFloat()/p.height);val w=max(1,(p.width*s).toInt());val h=max(1,(p.height*s).toInt());val b=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888);b.eraseColor(Color.WHITE);p.render(b,null,null,PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY);p.close();reader.setPage(b);page=index;status.text="${index+1} / ${r.pageCount}";reader.invalidate();openButton.visibility=View.GONE;toolbar.visibility=View.GONE;window.decorView.systemUiVisibility= (View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY)}catch(e:Exception){toast("خطأ في الصفحة: ${e.message}")}}
@@ -104,7 +111,25 @@ class MainActivity : Activity() {
     private fun rememberUndo(){undoStack.add(marks.map{it.copy()});if(undoStack.size>20)undoStack.removeAt(0)}
     private fun undo(){if(undoStack.isEmpty()){toast("مفيش حاجة للتراجع عنها");return};marks.clear();marks.addAll(undoStack.removeAt(undoStack.lastIndex).map{it.copy()});saveMarks();reader.invalidate();toast("تم التراجع عن آخر تعديل")}
     private fun saveMarks(){val key=pageUri?.toString()?:return;val a=JSONArray();marks.forEach{m->a.put(JSONObject().put("p",m.page).put("l",m.left.toDouble()).put("t",m.top.toDouble()).put("r",m.right.toDouble()).put("b",m.bottom.toDouble()).put("c",m.color).put("a",m.alpha))};prefs.edit().putString("marks:"+key,a.toString()).apply()}
-    private fun showHighlightHelp(){if(renderer==null){toast("افتح ملف PDF أولاً");return};AlertDialog.Builder(this).setTitle("إضافة تمييز").setMessage("اضغط مطولاً واسحب فوق السطر أو مجموعة السطور لتحديدها. سيُحفظ التمييز تلقائياً. اضغط على تمييز موجود لتغيير لونه أو حذفه.").setPositiveButton("حسناً",null).show()}
+    private fun showHighlightHelp(){setHighlightMode()}
+    private fun setHighlightMode(){if(renderer==null){toast("افتح ملف PDF أولاً");return};interactionMode=1;toast("وضع التمييز: اضغط على سطر لتمييزه أو اسحب على جزء محدد")}
+    private fun setMouseMode(){interactionMode=0;toast("وضع الماوس: اسحب للتنقل بين الصفحات واضغط على التمييز لمسحه")}
+    private fun showQuickPageDialog(){
+        val r=renderer?:run{toast("افتح ملف PDF أولاً");return}
+        val box=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(24,12,24,4)}
+        val label=TextView(this).apply{textSize=16f;gravity=Gravity.CENTER}
+        val seek=SeekBar(this).apply{max=(r.pageCount-1).coerceAtLeast(0);progress=page}
+        fun update(){label.text="الصفحة ${seek.progress+1} من ${r.pageCount}"}
+        box.addView(label);box.addView(seek);update()
+        seek.setOnSeekBarChangeListener(object:SeekBar.OnSeekBarChangeListener{
+            override fun onProgressChanged(s:SeekBar?,p:Int,u:Boolean){update()}
+            override fun onStartTrackingTouch(s:SeekBar?){}
+            override fun onStopTrackingTouch(s:SeekBar?){}
+        })
+        AlertDialog.Builder(this).setTitle("الانتقال السريع").setView(box)
+            .setPositiveButton("انتقال"){_,_->showPage(seek.progress)}
+            .setNegativeButton("إلغاء",null).show()
+    }
     private fun showColorSettings(){val names=colorNames.toMutableList();AlertDialog.Builder(this).setTitle("لون التمييز الافتراضي").setSingleChoiceItems(names.toTypedArray(),chosenColor){d,which->chosenColor=which;prefs.edit().putInt("color",which).apply();d.dismiss();showOpacityDialog()}.setNegativeButton("إلغاء",null).show()}
     private fun showOpacityDialog(){val box=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(24,12,24,4)};val label=TextView(this);val seek=SeekBar(this).apply{max=80;progress=opacity-10};box.addView(label);box.addView(seek);fun update(){label.text="الشفافية: ${10+seek.progress}% (قلّل الرقم لتقليل الشفافية)"};seek.setOnSeekBarChangeListener(object:SeekBar.OnSeekBarChangeListener{override fun onProgressChanged(s:SeekBar?,p:Int,u:Boolean){update()};override fun onStartTrackingTouch(s:SeekBar?){};override fun onStopTrackingTouch(s:SeekBar?){}});update();AlertDialog.Builder(this).setTitle("شفافية التمييز").setView(box).setPositiveButton("حفظ"){_,_->opacity=10+seek.progress;prefs.edit().putInt("opacity",opacity).apply()}.setNegativeButton("إلغاء",null).show()}
     private fun showSettings(){val items=arrayOf("أزرار الصوت: التالي/السابق","أزرار الصوت طبيعية","أزرار الصوت للتحكم في السطوع","منع إطفاء الشاشة أثناء القراءة","تطبيق اللون والشفافية الافتراضيين على كل التمييزات");AlertDialog.Builder(this).setTitle("إعدادات القراءة").setItems(items){_,which->when(which){0,1,2->{soundMode=which;prefs.edit().putInt("soundMode",which).apply();toast("تم حفظ إعداد أزرار الصوت")};3->{keepAwake=!keepAwake;prefs.edit().putBoolean("awake",keepAwake).apply();if(keepAwake)window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);toast(if(keepAwake)"منع إطفاء الشاشة مفعّل" else "تم إيقاف منع إطفاء الشاشة")};4->{rememberUndo();marks.forEach{it.color=colors[chosenColor];it.alpha=opacity};saveMarks();reader.invalidate();toast("تم تطبيق الإعداد على التمييزات")}}}.show()}
@@ -128,7 +153,51 @@ class MainActivity : Activity() {
             marks.filter{it.page==page}.forEach{m->paint.color=m.color;paint.alpha=((100-m.alpha)*255/100).coerceIn(0,255);c.drawRect(content.left+m.left*content.width(),content.top+m.top*content.height(),content.left+m.right*content.width(),content.top+m.bottom*content.height(),paint)}
             activeRect?.let{paint.color=colors[chosenColor];paint.alpha=((100-opacity)*255/100).coerceIn(0,255);c.drawRect(it,paint)};c.restoreToCount(save);paint.alpha=255}
         private fun toImage(x:Float,y:Float):Pair<Float,Float>{val xx=(x-width/2f)/zoom+width/2f;val yy=(y-height/2f)/zoom+height/2f;return Pair((xx-content.left)/content.width().coerceAtLeast(1f),(yy-content.top)/content.height().coerceAtLeast(1f))}
-        override fun onTouchEvent(e:MotionEvent):Boolean{detector.onTouchEvent(e);when(e.actionMasked){MotionEvent.ACTION_DOWN->{downX=e.x;downY=e.y;lastX=e.x;lastY=e.y;longStart=System.currentTimeMillis();selecting=false;parent?.requestDisallowInterceptTouchEvent(true);return true};MotionEvent.ACTION_POINTER_DOWN->{selecting=false;return true};MotionEvent.ACTION_MOVE->{if(e.pointerCount==1&&zoom==1f&&System.currentTimeMillis()-longStart>350){selecting=true;activeRect=RectF(min(downX,e.x),min(downY,e.y),max(downX,e.x),max(downY,e.y));invalidate()};lastX=e.x;lastY=e.y;return true};MotionEvent.ACTION_UP->{if(selecting){val rect=activeRect;activeRect=null;if(rect!=null&&rect.width()>8&&rect.height()>5)addSmartMarks(rect);invalidate()}else if(zoom==1f&&abs(e.x-downX)>70&&abs(e.x-downX)>abs(e.y-downY)*1.3f){showPage(page+if(e.x<downX)1 else -1)}else{val p=toImage(e.x,e.y);val found=marks.lastOrNull{it.page==page&&p.first>=it.left&&p.first<=it.right&&p.second>=it.top&&p.second<=it.bottom};if(found!=null)editMark(found)else{if(renderer!=null){toolbar.visibility=if(toolbar.visibility==VISIBLE)GONE else VISIBLE;openButton.visibility=toolbar.visibility}}};parent?.requestDisallowInterceptTouchEvent(false);return true};MotionEvent.ACTION_CANCEL->{activeRect=null;parent?.requestDisallowInterceptTouchEvent(false);invalidate();return true}};return true}
+        override fun onTouchEvent(e:MotionEvent):Boolean{
+            detector.onTouchEvent(e)
+            when(e.actionMasked){
+                MotionEvent.ACTION_DOWN->{downX=e.x;downY=e.y;lastX=e.x;lastY=e.y;longStart=System.currentTimeMillis();selecting=false;parent?.requestDisallowInterceptTouchEvent(true);return true}
+                MotionEvent.ACTION_POINTER_DOWN->{selecting=false;return true}
+                MotionEvent.ACTION_MOVE->{
+                    if(interactionMode==1&&e.pointerCount==1&&zoom==1f&&System.currentTimeMillis()-longStart>250){
+                        selecting=true;activeRect=RectF(min(downX,e.x),min(downY,e.y),max(downX,e.x),max(downY,e.y));invalidate()
+                    }
+                    lastX=e.x;lastY=e.y;return true
+                }
+                MotionEvent.ACTION_UP->{
+                    if(selecting){
+                        val rect=activeRect;activeRect=null
+                        if(rect!=null&&rect.width()>8&&rect.height()>5)addSmartMarks(rect)
+                        invalidate()
+                    }else if(zoom==1f&&abs(e.x-downX)>55&&abs(e.x-downX)>abs(e.y-downY)*1.25f){
+                        showPage(page+if(e.x<downX)1 else -1)
+                    }else{
+                        val p=toImage(e.x,e.y)
+                        val found=marks.lastOrNull{it.page==page&&p.first>=it.left&&p.first<=it.right&&p.second>=it.top&&p.second<=it.bottom}
+                        if(interactionMode==1){
+                            if(found==null)addLineAt(e.x,e.y)
+                        }else{
+                            if(found!=null){rememberUndo();marks.remove(found);saveMarks();invalidate();toast("تم مسح التمييز")}
+                            else if(renderer!=null){toolbar.visibility=if(toolbar.visibility==VISIBLE)GONE else VISIBLE;openButton.visibility=toolbar.visibility}
+                        }
+                    }
+                    parent?.requestDisallowInterceptTouchEvent(false);return true
+                }
+                MotionEvent.ACTION_CANCEL->{activeRect=null;parent?.requestDisallowInterceptTouchEvent(false);invalidate();return true}
+            }
+            return true
+        }
+        private fun addLineAt(x:Float,y:Float){
+            val b=bitmap?:return
+            val p=toImage(x,y)
+            if(p.first !in 0f..1f||p.second !in 0f..1f)return
+            val imageY=(p.second*b.height).toInt().coerceIn(0,b.height-1)
+            val radius=max(5,(b.height*0.012f).toInt())
+            val top=(imageY-radius).coerceAtLeast(0)
+            val bottom=(imageY+radius).coerceAtMost(b.height)
+            val rect=RectF(content.left,content.top+top.toFloat()/b.height*content.height(),content.right,content.top+bottom.toFloat()/b.height*content.height())
+            addSmartMarks(rect)
+        }
         private fun addSmartMarks(r:RectF){val a=toImage(r.left,r.top);val z=toImage(r.right,r.bottom);val l=min(a.first,z.first).coerceIn(0f,1f);val rr=max(a.first,z.first).coerceIn(0f,1f);val t=min(a.second,z.second).coerceIn(0f,1f);val bb=max(a.second,z.second).coerceIn(0f,1f);val b=bitmap?:return;val x1=(l*b.width).toInt().coerceIn(0,b.width-1);val x2=(rr*b.width).toInt().coerceIn(x1+1,b.width);val y1=(t*b.height).toInt().coerceIn(0,b.height-1);val y2=(bb*b.height).toInt().coerceIn(y1+1,b.height);val lines=mutableListOf<Pair<Int,Int>>();var start=-1;for(y in y1 until y2){var dark=0;val step=max(1,(x2-x1)/160);var n=0;var x=x1;while(x<x2){val px=b.getPixel(x,y);if(Color.red(px)<190&&Color.green(px)<190&&Color.blue(px)<190)dark++;n++;x+=step};val ink=dark.toFloat()/max(1,n);if(ink>0.012f){if(start<0)start=y}else if(start>=0){if(y-start>=2)lines.add(Pair(start,y));start=-1}};if(start>=0&&y2-start>=2)lines.add(Pair(start,y2));if(lines.isEmpty())lines.add(Pair(y1,y2));rememberUndo();lines.forEach{(top,bottom)->marks.add(Mark(page,l,(top.toFloat()/b.height).coerceIn(0f,1f),rr,(bottom.toFloat()/b.height).coerceIn(0f,1f),colors[chosenColor],opacity))};saveMarks();invalidate();toast("تم حفظ التمييز")}
         private fun editMark(m:Mark){AlertDialog.Builder(this@MainActivity).setTitle("تعديل التمييز").setItems(arrayOf("تغيير اللون","حذف التمييز")){_,which->if(which==0){AlertDialog.Builder(this@MainActivity).setTitle("اختر اللون").setSingleChoiceItems(colorNames,colors.indexOf(m.color).coerceAtLeast(0)){d,i->rememberUndo();m.color=colors[i];saveMarks();invalidate();d.dismiss();showOpacityForMark(m)}.setNegativeButton("إلغاء",null).show()}else{rememberUndo();marks.remove(m);saveMarks();invalidate();toast("تم حذف التمييز")}}.setNegativeButton("إلغاء",null).show()}
         private fun showOpacityForMark(m:Mark){val seek=SeekBar(this@MainActivity).apply{max=80;progress=(m.alpha-10).coerceIn(0,80)};AlertDialog.Builder(this@MainActivity).setTitle("شفافية التمييز").setView(seek).setPositiveButton("حفظ"){_,_->rememberUndo();m.alpha=10+seek.progress;saveMarks();invalidate()}.setNegativeButton("إلغاء",null).show()}
