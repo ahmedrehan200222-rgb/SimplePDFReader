@@ -273,20 +273,17 @@ class MainActivity : Activity() {
                     if(count>=columnThreshold)occupied.add(x)
                 }
                 if(occupied.isEmpty())continue
-                val runs=mutableListOf<Pair<Int,Int>>()
-                var left=occupied.first();var prev=left
-                for(x in occupied.drop(1)){if(x-prev>wordGap){runs.add(Pair(left,prev+1));left=x};prev=x}
-                runs.add(Pair(left,prev+1))
-                for((wl,wr) in runs){
-                    if(wr<sx1||wl>sx2)continue
-                    val l=max(0,wl-2).toFloat()/b.width
-                    val rr=min(b.width,wr+2).toFloat()/b.width
+                val lineLeft=max(0,occupied.first()-2)
+                val lineRight=min(b.width,occupied.last()+3)
+                if(lineRight>sx1&&lineLeft<sx2){
+                    val l=lineLeft.toFloat()/b.width
+                    val rr=lineRight.toFloat()/b.width
                     val t=top.toFloat()/b.height
                     val bb=bottom.toFloat()/b.height
                     if(rr>l&&bb>t)detected.add(Mark(page,l,t,rr,bb,colors[chosenColor],opacity))
                 }
             }
-            if(detected.isEmpty()){toast("مش قادر أحدد كلمات واضحة في المنطقة دي");return}
+            if(detected.isEmpty()){toast("مش قادر أحدد سطر واضح في المنطقة دي");return}
             rememberUndo();marks.addAll(detected);saveMarks();invalidate()
             toast("تم تمييز "+detected.size+" جزء من النص")
         }
