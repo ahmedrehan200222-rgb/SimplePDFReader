@@ -44,7 +44,12 @@ class MainActivity : Activity() {
     private var grayscale = false
     // 0 = mouse/navigation, 1 = highlight
     private var interactionMode = 0
-
+    private val pageTitles = mutableMapOf<Int,String>()
+    private val pageComments = mutableMapOf<Int,String>()
+    private val textBoxes = mutableListOf<TextBox>()
+    private var sidebar: HorizontalScrollView? = null
+    private var sidebarVisible = false
+    data class TextBox(val page:Int,var x:Float,var y:Float,var text:String,var color:Int=Color.BLACK,var size:Float=18f)
     data class Mark(val page:Int, val left:Float, val top:Float, val right:Float, val bottom:Float, var color:Int, var alpha:Int)
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -82,6 +87,13 @@ class MainActivity : Activity() {
         row4.addView(button("أبيض وأسود"){grayscale=!grayscale; reader.invalidate()},LinearLayout.LayoutParams(0,-2,1f))
         row4.addView(button("ملاءمة العرض"){fitWidth=!fitWidth; reader.invalidate()},LinearLayout.LayoutParams(0,-2,1f))
         toolbar.addView(row4)
+        val row5=LinearLayout(this).apply { gravity=Gravity.CENTER }
+        row5.addView(button("الصفحات"){toggleThumbnails()},LinearLayout.LayoutParams(0,-2,1f))
+        row5.addView(button("عنوان الصفحة"){editPageTitle()},LinearLayout.LayoutParams(0,-2,1f))
+        row5.addView(button("تعليق"){editPageComment()},LinearLayout.LayoutParams(0,-2,1f))
+        row5.addView(button("مربع نص"){addTextBox()},LinearLayout.LayoutParams(0,-2,1f))
+        row5.addView(button("بحث"){searchNotes()},LinearLayout.LayoutParams(0,-2,1f))
+        toolbar.addView(row5)
         root.addView(toolbar)
         reader=ReaderView()
         root.addView(reader,LinearLayout.LayoutParams(-1,0,1f))
@@ -97,7 +109,7 @@ class MainActivity : Activity() {
     override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?){super.onActivityResult(requestCode,resultCode,data);if(requestCode==77&&resultCode==RESULT_OK){val u=data?.data?:return;try{contentResolver.takePersistableUriPermission(u,data.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION);openUri(u,true)}catch(e:Exception){toast("تعذر فتح الملف: ${e.message}")}}}
     private fun openUri(uri:Uri,save:Boolean){
         try{closeDocument();pfd=contentResolver.openFileDescriptor(uri,"r")?:throw IOException("ملف غير متاح");renderer=PdfRenderer(pfd!!);pageUri=uri;page=0
-            undoStack.clear();val key=uri.toString();loadMarks(key);if(save)prefs.edit().putString("lastUri",key).apply();showPage(0)
+            undoStack.clear();val key=uri.toString();loadMarks(key);loadPageNotes(key);if(save)prefs.edit().putString("lastUri",key).apply();showPage(0)
         }catch(e:Exception){toast("تعذر فتح PDF: ${e.message}")}
     }
     private fun showPage(index:Int){val r=renderer?:return;if(index !in 0 until r.pageCount)return;try{val p=r.openPage(index);val maxSide=1250;val s=min( min(resources.displayMetrics.widthPixels.toFloat()/p.width,maxSide.toFloat()/p.width),maxSide.toFloat()/p.height);val w=max(1,(p.width*s).toInt());val h=max(1,(p.height*s).toInt());val b=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888);b.eraseColor(Color.WHITE);p.render(b,null,null,PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY);p.close();reader.setPage(b);page=index;status.text="${index+1} / ${r.pageCount}";reader.invalidate();openButton.visibility=View.GONE;toolbar.visibility=View.GONE;window.decorView.systemUiVisibility= (View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY)}catch(e:Exception){toast("خطأ في الصفحة: ${e.message}")}}
@@ -110,6 +122,15 @@ class MainActivity : Activity() {
     private fun loadMarks(key:String){marks.clear();try{val a=JSONArray(prefs.getString("marks:"+key,"[]"));for(i in 0 until a.length()){val o=a.getJSONObject(i);marks.add(Mark(o.getInt("p"),o.getDouble("l").toFloat(),o.getDouble("t").toFloat(),o.getDouble("r").toFloat(),o.getDouble("b").toFloat(),o.getInt("c"),o.getInt("a")))}}catch(_:Exception){}}
     private fun rememberUndo(){undoStack.add(marks.map{it.copy()});if(undoStack.size>20)undoStack.removeAt(0)}
     private fun undo(){if(undoStack.isEmpty()){toast("مفيش حاجة للتراجع عنها");return};marks.clear();marks.addAll(undoStack.removeAt(undoStack.lastIndex).map{it.copy()});saveMarks();reader.invalidate();toast("تم التراجع عن آخر تعديل")}
+    private fun loadPageNotes(key:String){pageTitles.clear();pageComments.clear();textBoxes.clear();try{val o=JSONObject(prefs.getString("pageNotes:"+key,"{}"));val t=o.optJSONObject("titles")?:JSONObject();val c=o.optJSONObject("comments")?:JSONObject();val b=o.optJSONArray("boxes")?:JSONArray();t.keys().forEach{pageTitles[it.toIntOrNull()?:-1]=t.optString(it)};c.keys().forEach{pageComments[it.toIntOrNull()?:-1]=c.optString(it)};for(i in 0 until b.length()){val x=b.getJSONObject(i);textBoxes.add(TextBox(x.getInt("p"),x.getDouble("x").toFloat(),x.getDouble("y").toFloat(),x.getString("t"),x.optInt("c",Color.BLACK),x.optDouble("s",18.0).toFloat()))}}catch(_:Exception){}}
+    private fun savePageNotes(){val key=pageUri?.toString()?:return;val t=JSONObject();pageTitles.forEach{(p,v)->t.put(p.toString(),v)};val c=JSONObject();pageComments.forEach{(p,v)->c.put(p.toString(),v)};val b=JSONArray();textBoxes.forEach{x->b.put(JSONObject().put("p",x.page).put("x",x.x.toDouble()).put("y",x.y.toDouble()).put("t",x.text).put("c",x.color).put("s",x.size.toDouble()))};prefs.edit().putString("pageNotes:"+key,JSONObject().put("titles",t).put("comments",c).put("boxes",b).toString()).apply();reader.invalidate()}
+    private fun editPageTitle(){if(renderer==null)return;val input=EditText(this).apply{setText(pageTitles[page]?:"");hint="اكتب عنوان الصفحة"};AlertDialog.Builder(this).setTitle("عنوان الصفحة").setView(input).setPositiveButton("حفظ"){_,_->val v=input.text.toString().trim();if(v.isEmpty())pageTitles.remove(page)else pageTitles[page]=v;savePageNotes();refreshThumbnails()}.setNegativeButton("إلغاء",null).show()}
+    private fun editPageComment(){if(renderer==null)return;val input=EditText(this).apply{setText(pageComments[page]?:"");hint="اكتب تعليقك";minLines=3;gravity=Gravity.TOP};AlertDialog.Builder(this).setTitle("تعليق الصفحة").setView(input).setPositiveButton("حفظ"){_,_->val v=input.text.toString().trim();if(v.isEmpty())pageComments.remove(page)else pageComments[page]=v;savePageNotes();toast("تم حفظ التعليق")}.setNegativeButton("إلغاء",null).show()}
+    private fun addTextBox(){if(renderer==null)return;val input=EditText(this).apply{hint="اكتب النص هنا";minLines=2;gravity=Gravity.TOP};AlertDialog.Builder(this).setTitle("مربع نص جديد").setView(input).setPositiveButton("إضافة"){_,_->val v=input.text.toString().trim();if(v.isNotEmpty()){textBoxes.add(TextBox(page,0.12f,0.18f,v));savePageNotes();toast("تمت إضافة مربع النص")}}.setNegativeButton("إلغاء",null).show()}
+    private fun searchNotes(){if(renderer==null)return;val input=EditText(this).apply{hint="ابحث في العناوين والتعليقات"};AlertDialog.Builder(this).setTitle("البحث في ملاحظاتك").setView(input).setPositiveButton("بحث"){_,_->val q=input.text.toString().trim();if(q.isNotEmpty()){val found=(pageTitles.filterValues{it.contains(q,true)}.keys+pageComments.filterValues{it.contains(q,true)}.keys).distinct().sorted();if(found.isEmpty())toast("لا توجد نتائج")else AlertDialog.Builder(this).setTitle("نتائج البحث").setItems(found.map{"صفحة "+(it+1)+": "+(pageTitles[it]?:pageComments[it]?:"").take(45)}.toTypedArray()){_,i->showPage(found[i])}.setNegativeButton("إغلاق",null).show()}}.setNegativeButton("إلغاء",null).show()}
+    private fun toggleThumbnails(){if(renderer==null)return;if(sidebarVisible){root.removeView(sidebar);sidebar=null;sidebarVisible=false;return};val strip=HorizontalScrollView(this);val row=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL;setPadding(4,4,4,4)};strip.addView(row);sidebar=strip;sidebarVisible=true;root.addView(strip,root.indexOfChild(reader),LinearLayout.LayoutParams(-1,108));fillThumbnails(row)}
+    private fun refreshThumbnails(){if(sidebarVisible){val row=sidebar?.getChildAt(0) as? LinearLayout?:return;fillThumbnails(row)}}
+    private fun fillThumbnails(row:LinearLayout){row.removeAllViews();val r=renderer?:return;for(i in 0 until r.pageCount){val cell=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER;setPadding(3,2,3,2);setBackgroundColor(if(i==page)0xFFB3E5FC.toInt() else Color.TRANSPARENT)};val label=TextView(this).apply{text=(i+1).toString();textSize=11f;gravity=Gravity.CENTER};val thumb=ImageView(this).apply{layoutParams=LinearLayout.LayoutParams(64,76);scaleType=ImageView.ScaleType.FIT_CENTER};try{val p=r.openPage(i);val w=64;val h=max(1,(p.height.toFloat()/p.width*w).toInt());val bm=Bitmap.createBitmap(w,h,Bitmap.Config.RGB_565);bm.eraseColor(Color.WHITE);p.render(bm,null,null,PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY);p.close();thumb.setImageBitmap(bm)}catch(_:Exception){};cell.addView(thumb);cell.addView(label);cell.setOnClickListener{showPage(i);refreshThumbnails()};row.addView(cell)}}
     private fun saveMarks(){val key=pageUri?.toString()?:return;val a=JSONArray();marks.forEach{m->a.put(JSONObject().put("p",m.page).put("l",m.left.toDouble()).put("t",m.top.toDouble()).put("r",m.right.toDouble()).put("b",m.bottom.toDouble()).put("c",m.color).put("a",m.alpha))};prefs.edit().putString("marks:"+key,a.toString()).apply()}
     private fun showHighlightHelp(){setHighlightMode()}
     private fun setHighlightMode(){if(renderer==null){toast("افتح ملف PDF أولاً");return};interactionMode=1;toast("وضع التمييز: اضغط على سطر لتمييزه أو اسحب على جزء محدد")}
@@ -140,25 +161,28 @@ class MainActivity : Activity() {
     private inner class ReaderView:View(this@MainActivity){
         private var bitmap:Bitmap?=null
         private var zoom=1f
+        private var panX=0f;private var panY=0f
         private var downX=0f;private var downY=0f;private var lastX=0f;private var lastY=0f
         private var selecting=false;private var longStart=0L
         private var activeRect:RectF?=null
-        private val detector=ScaleGestureDetector(this@MainActivity,object:ScaleGestureDetector.SimpleOnScaleGestureListener(){override fun onScale(d:ScaleGestureDetector):Boolean{zoom=(zoom*d.scaleFactor).coerceIn(1f,4f);invalidate();return true}})
+        private val detector=ScaleGestureDetector(this@MainActivity,object:ScaleGestureDetector.SimpleOnScaleGestureListener(){override fun onScale(d:ScaleGestureDetector):Boolean{val old=zoom;val next=(zoom*d.scaleFactor).coerceIn(1f,4f);val factor=next/old;panX=d.focusX-(d.focusX-panX)*factor;panY=d.focusY-(d.focusY-panY)*factor;zoom=next;clampPan();invalidate();return true}})
         private val paint=Paint(Paint.ANTI_ALIAS_FLAG)
         private var content=RectF()
-        fun setPage(b:Bitmap){bitmap?.recycle();bitmap=b;zoom=1f;invalidate()}
+        fun setPage(b:Bitmap){bitmap?.recycle();bitmap=b;zoom=1f;panX=0f;panY=0f;invalidate()}
         fun clearPage(){bitmap?.recycle();bitmap=null;invalidate()}
         private fun imageRect():RectF{val b=bitmap?:return RectF();val scale=min(width.toFloat()/b.width,height.toFloat()/b.height);val s=if(fitWidth)width.toFloat()/b.width else scale;val w=b.width*s;val h=b.height*s;return RectF((width-w)/2,(height-h)/2,(width+w)/2,(height+h)/2)}
-        override fun onDraw(c:Canvas){super.onDraw(c);val b=bitmap?:run{c.drawColor(if(night)Color.DKGRAY else Color.WHITE);return};content=imageRect();val save=c.save();c.scale(zoom,zoom,width/2f,height/2f);val filter=when{night->ColorMatrixColorFilter(floatArrayOf(-1f,0f,0f,0f,255f,0f,-1f,0f,0f,255f,0f,0f,-1f,0f,255f,0f,0f,0f,1f,0f));grayscale->ColorMatrixColorFilter(ColorMatrix().apply{setSaturation(0f)});else->null};paint.colorFilter=filter;paint.alpha=255;c.drawBitmap(b,null,content,paint);paint.colorFilter=null
+        override fun onDraw(c:Canvas){super.onDraw(c);val b=bitmap?:run{c.drawColor(if(night)Color.DKGRAY else Color.WHITE);return};content=imageRect();val save=c.save();c.translate(panX,panY);c.scale(zoom,zoom);val filter=when{night->ColorMatrixColorFilter(floatArrayOf(-1f,0f,0f,0f,255f,0f,-1f,0f,0f,255f,0f,0f,-1f,0f,255f,0f,0f,0f,1f,0f));grayscale->ColorMatrixColorFilter(ColorMatrix().apply{setSaturation(0f)});else->null};paint.colorFilter=filter;paint.alpha=255;c.drawBitmap(b,null,content,paint);paint.colorFilter=null
             marks.filter{it.page==page}.forEach{m->paint.color=m.color;paint.alpha=((100-m.alpha)*255/100).coerceIn(0,255);c.drawRect(content.left+m.left*content.width(),content.top+m.top*content.height(),content.left+m.right*content.width(),content.top+m.bottom*content.height(),paint)}
+            textBoxes.filter{it.page==page}.forEach{tb->paint.color=tb.color;paint.alpha=255;paint.textSize=tb.size;paint.typeface=Typeface.create(Typeface.DEFAULT,Typeface.BOLD);c.drawText(tb.text,content.left+tb.x*content.width(),content.top+tb.y*content.height(),paint)}
             activeRect?.let{paint.color=colors[chosenColor];paint.alpha=((100-opacity)*255/100).coerceIn(0,255);c.drawRect(it,paint)};c.restoreToCount(save);paint.alpha=255}
-        private fun toImage(x:Float,y:Float):Pair<Float,Float>{val xx=(x-width/2f)/zoom+width/2f;val yy=(y-height/2f)/zoom+height/2f;return Pair((xx-content.left)/content.width().coerceAtLeast(1f),(yy-content.top)/content.height().coerceAtLeast(1f))}
+        private fun toImage(x:Float,y:Float):Pair<Float,Float>{val xx=(x-panX)/zoom;val yy=(y-panY)/zoom;return Pair((xx-content.left)/content.width().coerceAtLeast(1f),(yy-content.top)/content.height().coerceAtLeast(1f))}
         override fun onTouchEvent(e:MotionEvent):Boolean{
             detector.onTouchEvent(e)
             when(e.actionMasked){
                 MotionEvent.ACTION_DOWN->{downX=e.x;downY=e.y;lastX=e.x;lastY=e.y;longStart=System.currentTimeMillis();selecting=false;parent?.requestDisallowInterceptTouchEvent(true);return true}
                 MotionEvent.ACTION_POINTER_DOWN->{selecting=false;return true}
                 MotionEvent.ACTION_MOVE->{
+                    if(zoom>1f&&e.pointerCount==1&&!selecting){panX+=e.x-lastX;panY+=e.y-lastY;clampPan();invalidate();lastX=e.x;lastY=e.y;return true}
                     if(interactionMode==1&&e.pointerCount==1&&zoom==1f&&System.currentTimeMillis()-longStart>250){
                         selecting=true;activeRect=RectF(min(downX,e.x),min(downY,e.y),max(downX,e.x),max(downY,e.y));invalidate()
                     }
@@ -187,6 +211,7 @@ class MainActivity : Activity() {
             }
             return true
         }
+        private fun clampPan(){val r=imageRect();val minX=width-r.right*zoom;val maxX=-r.left*zoom;val minY=height-r.bottom*zoom;val maxY=-r.top*zoom;panX=if(zoom<=1f)0f else panX.coerceIn(minX.coerceAtMost(maxX),maxX.coerceAtLeast(minX));panY=if(zoom<=1f)0f else panY.coerceIn(minY.coerceAtMost(maxY),maxY.coerceAtLeast(minY))}
         private fun addLineAt(x:Float,y:Float){
             val b=bitmap?:return
             val p=toImage(x,y)
