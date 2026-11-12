@@ -196,8 +196,12 @@ class MainActivity : Activity() {
                     }else{
                         val p=toImage(e.x,e.y)
                         val found=marks.lastOrNull{it.page==page&&p.first>=it.left&&p.first<=it.right&&p.second>=it.top&&p.second<=it.bottom}
-                        if(interactionMode==1){ if(found==null)addLineAt(e.x,e.y) }
-                        else if(found!=null){editMark(found)}
+                        val textBox=textBoxes.lastOrNull{it.page==page&&p.first>=it.x-0.03f&&p.first<=it.x+0.8f&&p.second>=it.y-0.08f&&p.second<=it.y+0.08f}
+                        when(interactionMode){
+                            1->{if(found==null)addLineAt(e.x,e.y)}
+                            2->{if(found!=null){rememberUndo();marks.remove(found);saveMarks();reader.invalidate();refreshThumbnails();toast("تم مسح التمييز")}else if(textBox!=null){textBoxes.remove(textBox);savePageNotes();toast("تم مسح مربع النص")}else toast("مفيش عنصر تحت الممحاة")}
+                            else->{if(found!=null)editMark(found)else if(textBox!=null){val input=EditText(this@MainActivity).apply{setText(textBox.text)};AlertDialog.Builder(this@MainActivity).setTitle("تعديل مربع النص").setView(input).setPositiveButton("حفظ"){_,_->textBox.text=input.text.toString();savePageNotes()}.setNeutralButton("حذف"){_,_->textBoxes.remove(textBox);savePageNotes()}.setNegativeButton("إلغاء",null).show()}}
+                        }
                     }
                     parent?.requestDisallowInterceptTouchEvent(false);return true
                 }
