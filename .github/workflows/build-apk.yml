@@ -5,6 +5,9 @@ on:
     branches: [ "**" ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -37,3 +40,17 @@ jobs:
         with:
           name: SimplePDFReader-debug
           path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Publish APK as a release (direct download link)
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          TAG="apk-$(echo "$BRANCH" | tr '/' '-')"
+          cp app/build/outputs/apk/debug/app-debug.apk SimplePDFReader.apk
+          gh release delete "$TAG" --yes --cleanup-tag || true
+          gh release create "$TAG" SimplePDFReader.apk \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "APK ($BRANCH)" \
+            --notes "Latest debug build from branch $BRANCH, commit $GITHUB_SHA"
