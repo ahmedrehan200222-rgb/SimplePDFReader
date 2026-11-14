@@ -2,6 +2,7 @@ package com.ahmedrehan.simplepdfreader
 
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Matrix
 import android.graphics.pdf.PdfRenderer
 import android.os.Handler
 import android.os.Looper
@@ -38,6 +39,35 @@ class PdfDoc(private val pfd: ParcelFileDescriptor) {
                     val b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
                     b.eraseColor(Color.WHITE)
                     p.render(b, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    result = b
+                } finally {
+                    p.close()
+                }
+            }
+        }
+        return result
+    }
+
+    /**
+     * بيرسم جزء من الصفحة بدقة عالية. u0..u1 و v0..v1 نسب من 0 لـ 1 من عرض وارتفاع الصفحة،
+     * والصورة الناتجة حجمها outW × outH بالظبط. بنستخدمه عند التكبير عشان الكلام يفضل واضح.
+     */
+    fun renderRegion(index: Int, u0: Float, v0: Float, u1: Float, v1: Float, outW: Int, outH: Int): Bitmap? {
+        var result: Bitmap? = null
+        synchronized(lock) {
+            if (!closed && index in 0 until pageCount && outW > 0 && outH > 0 && u1 > u0 && v1 > v0) {
+                val p = renderer.openPage(index)
+                try {
+                    val pw = p.width.toFloat()
+                    val ph = p.height.toFloat()
+                    val sx = outW / ((u1 - u0) * pw)
+                    val sy = outH / ((v1 - v0) * ph)
+                    val m = Matrix()
+                    m.setScale(sx, sy)
+                    m.postTranslate(-u0 * pw * sx, -v0 * ph * sy)
+                    val b = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
+                    b.eraseColor(Color.WHITE)
+                    p.render(b, null, m, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
                     result = b
                 } finally {
                     p.close()

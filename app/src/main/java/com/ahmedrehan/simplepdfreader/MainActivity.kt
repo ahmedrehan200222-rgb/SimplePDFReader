@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.Typeface
 import android.net.Uri
 import android.os.Bundle
@@ -52,6 +53,8 @@ class MainActivity : Activity(), ReaderHost {
     private var renderToken = 0
     private val renderExec: ExecutorService = Executors.newSingleThreadExecutor()
     private val undoStack = mutableListOf<List<Mark>>()
+    private val redoStack = mutableListOf<List<Mark>>()
+    private val hiExec: ExecutorService = Executors.newSingleThreadExecutor()
 
     // ---------- إعدادات ----------
     override var mode = 0
@@ -89,6 +92,10 @@ class MainActivity : Activity(), ReaderHost {
     private lateinit var paletteRow: LinearLayout
     private lateinit var hlBtn: TextView
     private lateinit var erBtn: TextView
+    private lateinit var undoBtn: TextView
+    private lateinit var redoBtn: TextView
+    private lateinit var nightBtn: TextView
+    private lateinit var grayBtn: TextView
     private var pagesScreen: PagesScreen? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -313,35 +320,58 @@ class MainActivity : Activity(), ReaderHost {
         navRow.addView(rightNav, lp(dp(56), dp(48)))
         bottomBar.addView(navRow, lp(-1, -2))
 
-        // الأدوات
-        val tools = LinearLayout(this)
-        tools.orientation = LinearLayout.HORIZONTAL
-        fun tool(label: String, action: () -> Unit): TextView {
-            val b = uiButton(label, false, 13f, action)
+        // الأدوات: صفين، في كل صف خمس أزرار
+        fun toolRow(): LinearLayout {
+            val r = LinearLayout(this)
+            r.orientation = LinearLayout.HORIZONTAL
+            val rp = lp(-1, -2)
+            rp.topMargin = dp(4)
+            bottomBar.addView(r, rp)
+            return r
+        }
+        fun tool(row: LinearLayout, label: String, action: () -> Unit): TextView {
+            val b = uiButton(label, false, 12f, action)
+            b.minHeight = dp(44)
+            b.minimumWidth = 0
+            b.setPadding(dp(2), dp(6), dp(2), dp(6))
             val p = lp(0, -2, 1f)
-            p.setMargins(dp(3), 0, dp(3), 0)
-            tools.addView(b, p)
+            p.setMargins(dp(2), 0, dp(2), 0)
+            row.addView(b, p)
             return b
         }
-        tool("الصفحات") { showPages(false) }
-        tool("بحث") { showPages(true) }
-        hlBtn = tool("تمييز") { switchMode(if (mode == 1) 0 else 1) }
-        erBtn = tool("ممحاة") { switchMode(if (mode == 2) 0 else 2) }
-        tool("وسم وتعليق") { editPageInfo(currentPage) }
-        val tp = lp(-1, -2)
-        tp.topMargin = dp(4)
-        bottomBar.addView(tools, tp)
+        val row1 = toolRow()
+        hlBtn = tool(row1, "تمييز") { switchMode(if (mode == 1) 0 else 1) }
+        erBtn = tool(row1, "ممحاة") { switchMode(if (mode == 2) 0 else 2) }
+        undoBtn = tool(row1, "↶ تراجع") { undo() }
+        redoBtn = tool(row1, "↷ إعادة") { redo() }
+        tool(row1, "＋ نص") { addTextBox() }
+        val row2 = toolRow()
+        tool(row2, "الصفحات") { showPages(false) }
+        tool(row2, "بحث") { showPages(true) }
+        tool(row2, "وسم/تعليق") { editPageInfo(currentPage) }
+        nightBtn = tool(row2, "ليلي") { toggleNight() }
+        grayBtn = tool(row2, "رمادي") { toggleGray() }
+        styleButton(nightBtn, night)
+        styleButton(grayBtn, grayscale)
+        updateUndoUi()
 
         col.addView(bottomBar, lp(-1, -2))
         return col
     }
 
+    private fun styleHint(): String =
+        if (highlightStyle == 0) {
+            "اسحب على الكلام لتمييز الجزء المحدد بس. ضغطة على سطر بتميّزه كله. ولو مكبّر، حرّك الصفحة بإصبعين."
+        } else {
+            "اسحب لرسم خط مستقيم (بيتعدّل لأفقي أو رأسي تلقائياً لو الميل بسيط)."
+        }
+
     private fun buildPalette() {
         paletteRow.removeAllViews()
-        val styleBtn = uiButton(if (highlightStyle == 0) "جملة كاملة" else "فرشاة", false, 13f) {
+        val styleBtn = uiButton(if (highlightStyle == 0) "النوع: جزء محدد" else "النوع: فرشاة مستقيمة", false, 13f) {
             highlightStyle = 1 - highlightStyle
             buildPalette()
-            toast(if (highlightStyle == 0) "اسحب فوق الكلام أو اضغط على سطر لتمييزه كاملاً" else "اسحب بإصبعك لرسم خط مستقيم")
+            toast(styleHint())
         }
         val sp = lp(-2, dp(44))
         sp.setMargins(dp(4), dp(2), dp(8), dp(2))
@@ -357,6 +387,10 @@ class MainActivity : Activity(), ReaderHost {
             p.setMargins(dp(6), dp(4), dp(6), dp(4))
             paletteRow.addView(d, p)
         }
+        val op = uiButton("الشفافية", false, 13f) { showOpacityDialog() }
+        val opp = lp(-2, dp(44))
+        opp.setMargins(dp(8), dp(2), dp(4), dp(2))
+        paletteRow.addView(op, opp)
     }
 
     private fun applyBookDirection() {
@@ -372,7 +406,7 @@ class MainActivity : Activity(), ReaderHost {
         modeRow.visibility = if (m == 1) View.VISIBLE else View.GONE
         if (m != 0) setChrome(true)
         when (m) {
-            1 -> toast(if (highlightStyle == 0) "وضع التمييز: اسحب فوق الكلام أو اضغط على سطر" else "وضع الفرشاة: اسحب لرسم خط مستقيم")
+            1 -> toast(styleHint())
             2 -> toast("الممحاة: اضغط على تمييز أو مربع نص لحذفه")
             else -> {}
         }
@@ -471,6 +505,8 @@ class MainActivity : Activity(), ReaderHost {
         store = null
         docKey = null
         undoStack.clear()
+        redoStack.clear()
+        updateUndoUi()
         mode = 0
         modeRow.visibility = View.GONE
         styleButton(hlBtn, false)
@@ -672,7 +708,15 @@ class MainActivity : Activity(), ReaderHost {
     override fun rememberUndo() {
         val st = store ?: return
         undoStack.add(st.marks.map { it.copy() })
-        if (undoStack.size > 20) undoStack.removeAt(0)
+        if (undoStack.size > 30) undoStack.removeAt(0)
+        redoStack.clear()
+        updateUndoUi()
+    }
+
+    private fun updateUndoUi() {
+        if (!::undoBtn.isInitialized || !::redoBtn.isInitialized) return
+        undoBtn.alpha = if (undoStack.isEmpty()) 0.4f else 1f
+        redoBtn.alpha = if (redoStack.isEmpty()) 0.4f else 1f
     }
 
     override fun marksChanged() {
@@ -684,6 +728,30 @@ class MainActivity : Activity(), ReaderHost {
     override fun boxesChanged() {
         store?.saveBoxes()
         reader.invalidate()
+    }
+
+    override fun renderRegion(
+        page: Int, u0: Float, v0: Float, u1: Float, v1: Float, w: Int, h: Int,
+        stale: () -> Boolean, done: (Bitmap) -> Unit
+    ) {
+        val d = doc ?: return
+        try {
+            hiExec.execute {
+                if (!stale() && doc === d) {
+                    val bm = try {
+                        d.renderRegion(page, u0, v0, u1, v1, w, h)
+                    } catch (e: Throwable) {
+                        null
+                    }
+                    if (bm != null) {
+                        runOnUiThread {
+                            if (!stale() && doc === d) done(bm) else bm.recycle()
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {
+        }
     }
 
     override fun turnPage(delta: Int) {
@@ -757,16 +825,8 @@ class MainActivity : Activity(), ReaderHost {
                 2 -> addTextBox()
                 3 -> showColorSettings()
                 4 -> gotoDialog()
-                5 -> {
-                    night = !night
-                    prefs.edit().putBoolean("night", night).apply()
-                    reader.invalidate()
-                }
-                6 -> {
-                    grayscale = !grayscale
-                    prefs.edit().putBoolean("gray", grayscale).apply()
-                    reader.invalidate()
-                }
+                5 -> toggleNight()
+                6 -> toggleGray()
                 7 -> {
                     fitWidth = !fitWidth
                     prefs.edit().putBoolean("fitWidth", fitWidth).apply()
@@ -786,10 +846,41 @@ class MainActivity : Activity(), ReaderHost {
             return
         }
         val snap = undoStack.removeAt(undoStack.lastIndex)
+        redoStack.add(st.marks.map { it.copy() })
         st.marks.clear()
         st.marks.addAll(snap.map { it.copy() })
         marksChanged()
-        toast("تم التراجع عن آخر تعديل")
+        updateUndoUi()
+        toast("تم التراجع")
+    }
+
+    private fun redo() {
+        val st = store ?: return
+        if (redoStack.isEmpty()) {
+            toast("مفيش حاجة للإعادة")
+            return
+        }
+        val snap = redoStack.removeAt(redoStack.lastIndex)
+        undoStack.add(st.marks.map { it.copy() })
+        st.marks.clear()
+        st.marks.addAll(snap.map { it.copy() })
+        marksChanged()
+        updateUndoUi()
+        toast("تمت الإعادة")
+    }
+
+    private fun toggleNight() {
+        night = !night
+        prefs.edit().putBoolean("night", night).apply()
+        styleButton(nightBtn, night)
+        reader.invalidate()
+    }
+
+    private fun toggleGray() {
+        grayscale = !grayscale
+        prefs.edit().putBoolean("gray", grayscale).apply()
+        styleButton(grayBtn, grayscale)
+        reader.invalidate()
     }
 
     private fun addTextBox() {
@@ -957,6 +1048,7 @@ class MainActivity : Activity(), ReaderHost {
     override fun onDestroy() {
         closeDocument()
         renderExec.shutdownNow()
+        hiExec.shutdownNow()
         val a = window.attributes
         a.screenBrightness = originalBrightness
         window.attributes = a
