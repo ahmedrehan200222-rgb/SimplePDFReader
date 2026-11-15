@@ -865,11 +865,11 @@ class MainActivity : Activity(), ReaderHost {
         AlertDialog.Builder(this).setTitle("طريقة التقليب")
             .setSingleChoiceItems(names, flipMode) { d, which ->
                 d.dismiss()
-                setFlipMode(which)
+                changeFlipMode(which)
             }.setNegativeButton("إلغاء", null).show()
     }
 
-    private fun setFlipMode(m: Int) {
+    private fun changeFlipMode(m: Int) {
         flipMode = m
         if (m == 1) rtlText = true else if (m == 0) rtlText = false
         prefs.edit().putInt("flip", m).putBoolean("rtlText", rtlText).apply()
