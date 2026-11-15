@@ -77,6 +77,39 @@ class PdfDoc(private val pfd: ParcelFileDescriptor) {
         return result
     }
 
+    /** نسبة ارتفاع/عرض أول صفحة (سريعة). */
+    fun firstAspect(): Float {
+        var r = 1.414f
+        synchronized(lock) {
+            if (!closed && pageCount > 0) {
+                val p = renderer.openPage(0)
+                try {
+                    r = p.height.toFloat() / max(1, p.width)
+                } finally {
+                    p.close()
+                }
+            }
+        }
+        return r
+    }
+
+    /** نسب كل الصفحات. بتتحسب في خيط خلفي وبتسيب القفل بين كل صفحة والتانية. */
+    fun computeAspects(): FloatArray? {
+        val out = FloatArray(pageCount)
+        for (i in 0 until pageCount) {
+            synchronized(lock) {
+                if (closed) return null
+                val p = renderer.openPage(i)
+                try {
+                    out[i] = p.height.toFloat() / max(1, p.width)
+                } finally {
+                    p.close()
+                }
+            }
+        }
+        return out
+    }
+
     fun renderThumb(index: Int, widthPx: Int): Bitmap? {
         var result: Bitmap? = null
         synchronized(lock) {

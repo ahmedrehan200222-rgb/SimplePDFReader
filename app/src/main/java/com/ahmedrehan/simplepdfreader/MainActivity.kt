@@ -48,13 +48,13 @@ class MainActivity : Activity(), ReaderHost {
     private var docKey: String? = null
     private var docName = ""
     override var store: DocStore? = null
-    override var currentPage = 0
-    private var targetPage = 0
+    var currentPage = 0
     private var renderToken = 0
     private val renderExec: ExecutorService = Executors.newSingleThreadExecutor()
     private val undoStack = mutableListOf<List<Mark>>()
     private val redoStack = mutableListOf<List<Mark>>()
     private val hiExec: ExecutorService = Executors.newSingleThreadExecutor()
+    private val aspectExec: ExecutorService = Executors.newSingleThreadExecutor()
 
     // ---------- إعدادات ----------
     override var mode = 0
@@ -62,7 +62,9 @@ class MainActivity : Activity(), ReaderHost {
     override var fitWidth = true
     override var night = false
     override var grayscale = false
-    override var rtlBook = false
+    override var flipMode = 0
+    private var rtlText = false
+    override val rtlBook: Boolean get() = rtlText
     override val markColor: Int get() = COLORS[chosenColor]
     override val markOpacity: Int get() = opacity
     private var chosenColor = 0
@@ -90,12 +92,13 @@ class MainActivity : Activity(), ReaderHost {
     private lateinit var rightNav: TextView
     private lateinit var modeRow: HorizontalScrollView
     private lateinit var paletteRow: LinearLayout
-    private lateinit var hlBtn: TextView
-    private lateinit var erBtn: TextView
-    private lateinit var undoBtn: TextView
-    private lateinit var redoBtn: TextView
-    private lateinit var nightBtn: TextView
-    private lateinit var grayBtn: TextView
+    private lateinit var hlBtn: IconView
+    private lateinit var erBtn: IconView
+    private lateinit var undoBtn: IconView
+    private lateinit var redoBtn: IconView
+    private lateinit var nightBtn: IconView
+    private lateinit var grayBtn: IconView
+    private lateinit var flipBtn: IconView
     private var pagesScreen: PagesScreen? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -106,7 +109,9 @@ class MainActivity : Activity(), ReaderHost {
         opacity = prefs.getInt("opacity", 55)
         night = prefs.getBoolean("night", false)
         keepAwake = prefs.getBoolean("awake", true)
-        rtlBook = prefs.getBoolean("rtl", false)
+        val oldRtl = prefs.getBoolean("rtl", false)
+        rtlText = prefs.getBoolean("rtlText", oldRtl)
+        flipMode = prefs.getInt("flip", if (oldRtl) 1 else 0).coerceIn(0, 2)
         fitWidth = prefs.getBoolean("fitWidth", true)
         grayscale = prefs.getBoolean("gray", false)
 
@@ -255,7 +260,7 @@ class MainActivity : Activity(), ReaderHost {
         topBar.gravity = Gravity.CENTER_VERTICAL
         topBar.setBackgroundColor(Theme.SURFACE)
         topBar.setPadding(dp(8), dp(4), dp(8), dp(4))
-        topBar.addView(uiButton("المكتبة", false, 14f) { goHome() }, lp(-2, -2))
+        topBar.addView(iconButton(Icon.HOME, "المكتبة", { toast(it) }) { goHome() }, lp(dp(52), dp(48)))
         val mid = LinearLayout(this)
         mid.orientation = LinearLayout.VERTICAL
         mid.gravity = Gravity.CENTER
@@ -274,7 +279,12 @@ class MainActivity : Activity(), ReaderHost {
         mid.addView(titleText, lp(-1, -2))
         mid.addView(subText, lp(-1, -2))
         topBar.addView(mid, lp(0, -2, 1f))
-        topBar.addView(uiButton("⋮ المزيد", false, 14f) { showMoreOptions() }, lp(-2, -2))
+        flipBtn = iconButton(Icon.FLIP_LTR, "طريقة التقليب", { toast(it) }) { showFlipDialog() }
+        topBar.addView(flipBtn, lp(dp(52), dp(48)))
+        val fp = lp(dp(52), dp(48))
+        fp.leftMargin = dp(4)
+        fp.rightMargin = dp(4)
+        topBar.addView(iconButton(Icon.MORE, "المزيد", { toast(it) }) { showMoreOptions() }, fp)
         col.addView(topBar, lp(-1, -2))
         col.addView(divider(), lp(-1, dp(1)))
 
@@ -302,8 +312,8 @@ class MainActivity : Activity(), ReaderHost {
         navRow.orientation = LinearLayout.HORIZONTAL
         navRow.gravity = Gravity.CENTER_VERTICAL
         navRow.layoutDirection = View.LAYOUT_DIRECTION_LTR
-        leftNav = uiButton("‹", false, 24f) { turnPage(if (rtlBook) 1 else -1) }
-        rightNav = uiButton("›", false, 24f) { turnPage(if (rtlBook) -1 else 1) }
+        leftNav = uiButton("‹", false, 24f) { turnPage(if (flipMode == 1) 1 else -1) }
+        rightNav = uiButton("›", false, 24f) { turnPage(if (flipMode == 1) -1 else 1) }
         seek = SeekBar(this)
         seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(s: SeekBar?, progress: Int, fromUser: Boolean) {
@@ -320,39 +330,31 @@ class MainActivity : Activity(), ReaderHost {
         navRow.addView(rightNav, lp(dp(56), dp(48)))
         bottomBar.addView(navRow, lp(-1, -2))
 
-        // الأدوات: صفين، في كل صف خمس أزرار
-        fun toolRow(): LinearLayout {
-            val r = LinearLayout(this)
-            r.orientation = LinearLayout.HORIZONTAL
-            val rp = lp(-1, -2)
-            rp.topMargin = dp(4)
-            bottomBar.addView(r, rp)
-            return r
-        }
-        fun tool(row: LinearLayout, label: String, action: () -> Unit): TextView {
-            val b = uiButton(label, false, 12f, action)
-            b.minHeight = dp(44)
-            b.minimumWidth = 0
-            b.setPadding(dp(2), dp(6), dp(2), dp(6))
-            val p = lp(0, -2, 1f)
+        // الأدوات: صف واحد بأيقونات (الضغط المطوّل على أي أيقونة بيظهر اسمها)
+        val tools = LinearLayout(this)
+        tools.orientation = LinearLayout.HORIZONTAL
+        val tp = lp(-1, -2)
+        tp.topMargin = dp(4)
+        bottomBar.addView(tools, tp)
+        fun tool(icon: Icon, label: String, action: () -> Unit): IconView {
+            val b = iconButton(icon, label, { toast(it) }, action)
+            val p = lp(0, dp(46), 1f)
             p.setMargins(dp(2), 0, dp(2), 0)
-            row.addView(b, p)
+            tools.addView(b, p)
             return b
         }
-        val row1 = toolRow()
-        hlBtn = tool(row1, "تمييز") { switchMode(if (mode == 1) 0 else 1) }
-        erBtn = tool(row1, "ممحاة") { switchMode(if (mode == 2) 0 else 2) }
-        undoBtn = tool(row1, "↶ تراجع") { undo() }
-        redoBtn = tool(row1, "↷ إعادة") { redo() }
-        tool(row1, "＋ نص") { addTextBox() }
-        val row2 = toolRow()
-        tool(row2, "الصفحات") { showPages(false) }
-        tool(row2, "بحث") { showPages(true) }
-        tool(row2, "وسم/تعليق") { editPageInfo(currentPage) }
-        nightBtn = tool(row2, "ليلي") { toggleNight() }
-        grayBtn = tool(row2, "رمادي") { toggleGray() }
-        styleButton(nightBtn, night)
-        styleButton(grayBtn, grayscale)
+        hlBtn = tool(Icon.PEN, "تمييز") { switchMode(if (mode == 1) 0 else 1) }
+        erBtn = tool(Icon.ERASER, "ممحاة") { switchMode(if (mode == 2) 0 else 2) }
+        undoBtn = tool(Icon.UNDO, "تراجع") { undo() }
+        redoBtn = tool(Icon.REDO, "إعادة") { redo() }
+        tool(Icon.TEXT, "إضافة نص") { addTextBox() }
+        tool(Icon.PAGES, "الصفحات والفهرس") { showPages(false) }
+        tool(Icon.SEARCH, "بحث في الصفحات") { showPages(true) }
+        tool(Icon.TAG, "وسم الصفحة وتعليق") { editPageInfo(currentPage) }
+        nightBtn = tool(Icon.MOON, "الوضع الليلي") { toggleNight() }
+        grayBtn = tool(Icon.CONTRAST, "أبيض وأسود") { toggleGray() }
+        nightBtn.active = night
+        grayBtn.active = grayscale
         updateUndoUi()
 
         col.addView(bottomBar, lp(-1, -2))
@@ -394,15 +396,22 @@ class MainActivity : Activity(), ReaderHost {
     }
 
     private fun applyBookDirection() {
-        seek.layoutDirection = if (rtlBook) View.LAYOUT_DIRECTION_RTL else View.LAYOUT_DIRECTION_LTR
-        leftNav.setOnClickListener { turnPage(if (rtlBook) 1 else -1) }
-        rightNav.setOnClickListener { turnPage(if (rtlBook) -1 else 1) }
+        val rtlFlip = flipMode == 1
+        seek.layoutDirection = if (rtlFlip) View.LAYOUT_DIRECTION_RTL else View.LAYOUT_DIRECTION_LTR
+        leftNav.setOnClickListener { turnPage(if (rtlFlip) 1 else -1) }
+        rightNav.setOnClickListener { turnPage(if (rtlFlip) -1 else 1) }
+        flipBtn.icon = when (flipMode) {
+            0 -> Icon.FLIP_LTR
+            1 -> Icon.FLIP_RTL
+            else -> Icon.FLIP_DOWN
+        }
+        flipBtn.invalidate()
     }
 
     private fun switchMode(m: Int) {
         mode = m
-        styleButton(hlBtn, m == 1)
-        styleButton(erBtn, m == 2)
+        hlBtn.active = m == 1
+        erBtn.active = m == 2
         modeRow.visibility = if (m == 1) View.VISIBLE else View.GONE
         if (m != 0) setChrome(true)
         when (m) {
@@ -483,9 +492,17 @@ class MainActivity : Activity(), ReaderHost {
             seek.max = (d.pageCount - 1).coerceAtLeast(0)
             val start = prefs.getInt("page:$key", 0).coerceIn(0, (d.pageCount - 1).coerceAtLeast(0))
             currentPage = start
-            targetPage = start
             seek.progress = start
+            reader.setDocument(d.pageCount, d.firstAspect())
             updateChrome()
+            aspectExec.execute {
+                val a = try {
+                    d.computeAspects()
+                } catch (e: Throwable) {
+                    null
+                }
+                if (a != null) runOnUiThread { if (doc === d) reader.setAspects(a) }
+            }
             showPage(start)
         } catch (e: Exception) {
             closeDocument()
@@ -499,7 +516,7 @@ class MainActivity : Activity(), ReaderHost {
         renderToken++
         thumbs?.shutdown()
         thumbs = null
-        reader.clearPage()
+        reader.clearDocument()
         doc?.close()
         doc = null
         store = null
@@ -509,8 +526,8 @@ class MainActivity : Activity(), ReaderHost {
         updateUndoUi()
         mode = 0
         modeRow.visibility = View.GONE
-        styleButton(hlBtn, false)
-        styleButton(erBtn, false)
+        hlBtn.active = false
+        erBtn.active = false
     }
 
     private fun showReaderUi() {
@@ -549,34 +566,40 @@ class MainActivity : Activity(), ReaderHost {
         if (hasFocus && doc != null) applyImmersive(true)
     }
 
-    /** بيرسم الصفحة في خيط خلفي عشان الجهاز مايتعلّقش، وبيستبدل الصفحة لما تخلص. */
     private fun showPage(index: Int) {
         val d = doc ?: return
         if (index < 0 || index >= d.pageCount) return
-        targetPage = index
-        val token = ++renderToken
+        reader.goToPage(index, false, true)
+    }
+
+    /** الـ reader بيبلّغنا لما الصفحة الحالية تتغير (بالتقليب أو بالتمرير). */
+    override fun pageChanged(index: Int) {
+        currentPage = index
+        updateChrome()
+        pagesScreen?.refresh()
+        val key = docKey
+        if (key != null) prefs.edit().putInt("page:$key", index).apply()
+    }
+
+    override fun requestPage(page: Int, stale: () -> Boolean, done: (Bitmap) -> Unit) {
+        val d = doc ?: return
         val screenW = resources.displayMetrics.widthPixels
-        titleText.text = pageLabel(index)
-        renderExec.execute {
-            val bm = try {
-                d.renderPage(index, screenW, 1250)
-            } catch (e: Throwable) {
-                null
-            }
-            runOnUiThread {
-                if (token == renderToken && doc === d) {
-                    if (bm == null) {
-                        toast("تعذر رسم الصفحة ${index + 1}")
-                    } else {
-                        currentPage = index
-                        reader.setPage(bm)
-                        updateChrome()
-                        pagesScreen?.refresh()
-                        val key = docKey
-                        if (key != null) prefs.edit().putInt("page:$key", index).apply()
+        try {
+            renderExec.execute {
+                if (!stale() && doc === d) {
+                    val bm = try {
+                        d.renderPage(page, screenW, 1400)
+                    } catch (e: Throwable) {
+                        null
+                    }
+                    if (bm != null) {
+                        runOnUiThread {
+                            if (doc === d) done(bm) else bm.recycle()
+                        }
                     }
                 }
             }
+        } catch (_: Exception) {
         }
     }
 
@@ -755,7 +778,7 @@ class MainActivity : Activity(), ReaderHost {
     }
 
     override fun turnPage(delta: Int) {
-        showPage(targetPage + delta)
+        showPage(currentPage + delta)
     }
 
     override fun tapCenter() {
@@ -807,36 +830,58 @@ class MainActivity : Activity(), ReaderHost {
 
     private fun showMoreOptions() {
         val items = arrayOf(
+            "طريقة التقليب والعرض",
             "الصفحات والفهرس والبحث",
-            "تراجع عن آخر تعديل",
-            "إضافة مربع نص",
             "لون وشفافية التمييز",
             "الانتقال إلى رقم صفحة",
-            "الوضع الليلي" + onOff(night),
-            "أبيض وأسود" + onOff(grayscale),
             "ملاءمة العرض" + onOff(fitWidth),
             "الإعدادات",
             "إغلاق الكتاب والعودة للمكتبة"
         )
-        AlertDialog.Builder(this).setTitle("أدوات القراءة").setItems(items) { _, i ->
+        AlertDialog.Builder(this).setTitle("المزيد").setItems(items) { _, i ->
             when (i) {
-                0 -> showPages(false)
-                1 -> undo()
-                2 -> addTextBox()
-                3 -> showColorSettings()
-                4 -> gotoDialog()
-                5 -> toggleNight()
-                6 -> toggleGray()
-                7 -> {
+                0 -> showFlipDialog()
+                1 -> showPages(false)
+                2 -> showColorSettings()
+                3 -> gotoDialog()
+                4 -> {
                     fitWidth = !fitWidth
                     prefs.edit().putBoolean("fitWidth", fitWidth).apply()
                     reader.resetView()
                 }
-                8 -> showSettings()
-                9 -> goHome()
+                5 -> showSettings()
+                6 -> goHome()
                 else -> {}
             }
         }.show()
+    }
+
+    private fun showFlipDialog() {
+        val names = arrayOf(
+            "أفقي: من اليسار لليمين",
+            "أفقي: من اليمين لليسار (كتب عربي)",
+            "رأسي متواصل: الكتاب كله صفحة واحدة طويلة"
+        )
+        AlertDialog.Builder(this).setTitle("طريقة التقليب")
+            .setSingleChoiceItems(names, flipMode) { d, which ->
+                d.dismiss()
+                setFlipMode(which)
+            }.setNegativeButton("إلغاء", null).show()
+    }
+
+    private fun setFlipMode(m: Int) {
+        flipMode = m
+        if (m == 1) rtlText = true else if (m == 0) rtlText = false
+        prefs.edit().putInt("flip", m).putBoolean("rtlText", rtlText).apply()
+        applyBookDirection()
+        reader.flipChanged()
+        toast(
+            when (m) {
+                0 -> "التقليب من اليسار لليمين"
+                1 -> "التقليب من اليمين لليسار"
+                else -> "وضع رأسي: مرّر لتحت، وأزرار الصوت بتنزّل جزء من الصفحة"
+            }
+        )
     }
 
     private fun undo() {
@@ -872,14 +917,14 @@ class MainActivity : Activity(), ReaderHost {
     private fun toggleNight() {
         night = !night
         prefs.edit().putBoolean("night", night).apply()
-        styleButton(nightBtn, night)
+        nightBtn.active = night
         reader.invalidate()
     }
 
     private fun toggleGray() {
         grayscale = !grayscale
         prefs.edit().putBoolean("gray", grayscale).apply()
-        styleButton(grayBtn, grayscale)
+        grayBtn.active = grayscale
         reader.invalidate()
     }
 
@@ -972,11 +1017,11 @@ class MainActivity : Activity(), ReaderHost {
 
     private fun showSettings() {
         val items = arrayOf(
-            "أزرار الصوت: تقليب الصفحات" + onOff(soundMode == 0),
+            "أزرار الصوت: تقليب / تمرير الصفحات" + onOff(soundMode == 0),
             "أزرار الصوت: التحكم الطبيعي في الصوت" + onOff(soundMode == 1),
             "أزرار الصوت: التحكم في السطوع" + onOff(soundMode == 2),
             "منع إطفاء الشاشة أثناء القراءة" + onOff(keepAwake),
-            "كتاب عربي (التقليب من اليمين لليسار)" + onOff(rtlBook),
+            "النص عربي (اتجاه تحديد الكلام بالتمييز)" + onOff(rtlText),
             "تطبيق اللون والشفافية الحاليين على كل التمييزات"
         )
         AlertDialog.Builder(this).setTitle("إعدادات القراءة").setItems(items) { _, which ->
@@ -994,10 +1039,9 @@ class MainActivity : Activity(), ReaderHost {
                     toast(if (keepAwake) "منع إطفاء الشاشة مفعّل" else "تم إيقاف منع إطفاء الشاشة")
                 }
                 4 -> {
-                    rtlBook = !rtlBook
-                    prefs.edit().putBoolean("rtl", rtlBook).apply()
-                    applyBookDirection()
-                    toast(if (rtlBook) "التقليب من اليمين لليسار" else "التقليب من اليسار لليمين")
+                    rtlText = !rtlText
+                    prefs.edit().putBoolean("rtlText", rtlText).apply()
+                    toast(if (rtlText) "النص عربي: التحديد من اليمين لليسار" else "النص من اليسار لليمين")
                 }
                 5 -> {
                     val st = store
@@ -1022,7 +1066,11 @@ class MainActivity : Activity(), ReaderHost {
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         if (doc != null && (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)) {
             when (soundMode) {
-                0 -> turnPage(if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) 1 else -1)
+                0 -> {
+                    val up = keyCode == KeyEvent.KEYCODE_VOLUME_UP
+                    // في الوضع الرأسي: فوق = لفوق، تحت = لتحت. وفي الأفقي: رفع الصوت = الصفحة اللي بعدها.
+                    reader.pageStep(if (flipMode == 2) (if (up) -1 else 1) else (if (up) 1 else -1))
+                }
                 1 -> return super.onKeyDown(keyCode, event)
                 2 -> {
                     brightness = (brightness + if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) 0.08f else -0.08f).coerceIn(0.05f, 1f)
@@ -1049,6 +1097,7 @@ class MainActivity : Activity(), ReaderHost {
         closeDocument()
         renderExec.shutdownNow()
         hiExec.shutdownNow()
+        aspectExec.shutdownNow()
         val a = window.attributes
         a.screenBrightness = originalBrightness
         window.attributes = a
