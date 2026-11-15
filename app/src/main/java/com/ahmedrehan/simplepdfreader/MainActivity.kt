@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import android.graphics.Typeface
 import android.net.Uri
@@ -64,6 +65,7 @@ class MainActivity : Activity(), ReaderHost {
     override var grayscale = false
     override var flipMode = 0
     private var rtlText = false
+    private var orient = 0
     override val rtlBook: Boolean get() = rtlText
     override val markColor: Int get() = COLORS[chosenColor]
     override val markOpacity: Int get() = opacity
@@ -109,6 +111,8 @@ class MainActivity : Activity(), ReaderHost {
         opacity = prefs.getInt("opacity", 55)
         night = prefs.getBoolean("night", false)
         keepAwake = prefs.getBoolean("awake", true)
+        orient = prefs.getInt("orient", 0).coerceIn(0, 2)
+        applyOrientation()
         val oldRtl = prefs.getBoolean("rtl", false)
         rtlText = prefs.getBoolean("rtlText", oldRtl)
         flipMode = prefs.getInt("flip", if (oldRtl) 1 else 0).coerceIn(0, 2)
@@ -279,6 +283,10 @@ class MainActivity : Activity(), ReaderHost {
         mid.addView(titleText, lp(-1, -2))
         mid.addView(subText, lp(-1, -2))
         topBar.addView(mid, lp(0, -2, 1f))
+        val rp = lp(dp(52), dp(48))
+        rp.leftMargin = dp(4)
+        rp.rightMargin = dp(4)
+        topBar.addView(iconButton(Icon.ROTATE, "تدوير الشاشة", { toast(it) }) { showRotateDialog() }, rp)
         flipBtn = iconButton(Icon.FLIP_LTR, "طريقة التقليب", { toast(it) }) { showFlipDialog() }
         topBar.addView(flipBtn, lp(dp(52), dp(48)))
         val fp = lp(dp(52), dp(48))
@@ -854,6 +862,33 @@ class MainActivity : Activity(), ReaderHost {
                 else -> {}
             }
         }.show()
+    }
+
+    /** 0 تلقائي (حسب إعداد الجهاز)، 1 عمودي، 2 أفقي. الاتنين اليدويين بيسمحوا بالقلب 180 درجة. */
+    private fun applyOrientation() {
+        requestedOrientation = when (orient) {
+            1 -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+            2 -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            else -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
+
+    private fun showRotateDialog() {
+        val names = arrayOf("تلقائي (حسب وضع الجهاز)", "عمودي (طولي)", "أفقي (عرضي)")
+        AlertDialog.Builder(this).setTitle("تدوير الشاشة")
+            .setSingleChoiceItems(names, orient) { d, which ->
+                d.dismiss()
+                orient = which
+                prefs.edit().putInt("orient", which).apply()
+                applyOrientation()
+                toast(
+                    when (which) {
+                        1 -> "الشاشة مثبّتة عمودي"
+                        2 -> "الشاشة مثبّتة أفقي"
+                        else -> "التدوير تلقائي"
+                    }
+                )
+            }.setNegativeButton("إلغاء", null).show()
     }
 
     private fun showFlipDialog() {

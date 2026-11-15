@@ -131,7 +131,7 @@ fun PageInfo.describe(): SpannableStringBuilder {
 
 
 /** أيقونات الأدوات. بتترسم بالكود، فمش بتعتمد على خطوط أو إيموجي الجهاز. */
-enum class Icon { PEN, ERASER, UNDO, REDO, TEXT, PAGES, SEARCH, TAG, MOON, CONTRAST, MORE, HOME, FLIP_LTR, FLIP_RTL, FLIP_DOWN }
+enum class Icon { PEN, ERASER, UNDO, REDO, TEXT, PAGES, SEARCH, TAG, MOON, CONTRAST, MORE, HOME, FLIP_LTR, FLIP_RTL, FLIP_DOWN, ROTATE }
 
 class IconView(ctx: Context, var icon: Icon, private val label: String) : View(ctx) {
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -276,6 +276,14 @@ class IconView(ctx: Context, var icon: Icon, private val label: String) : View(c
                 door.lineTo(13.5f, 14.5f)
                 door.lineTo(13.5f, 20f)
                 c.drawPath(door, stroke)
+            }
+            Icon.ROTATE -> {
+                c.drawRoundRect(RectF(9.5f, 8.5f, 14.5f, 15.5f), 1f, 1f, stroke)
+                val arc = Path()
+                arc.arcTo(RectF(4.5f, 4.5f, 19.5f, 19.5f), -40f, 220f)
+                c.drawPath(arc, stroke)
+                c.drawLine(4.5f, 12f, 2f, 15.5f, stroke)
+                c.drawLine(4.5f, 12f, 8f, 15f, stroke)
             }
             Icon.FLIP_LTR, Icon.FLIP_RTL -> {
                 c.save()

@@ -7,6 +7,16 @@ android {
     namespace = "com.ahmedrehan.simplepdfreader"
     compileSdk = 35
 
+    // مفتاح توقيع ثابت: عشان كل نسخة جديدة تتركّب فوق القديمة من غير ما تفقد التمييزات
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     defaultConfig {
         applicationId = "com.ahmedrehan.simplepdfreader"
         minSdk = 24
