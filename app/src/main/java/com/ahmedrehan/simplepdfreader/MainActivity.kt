@@ -71,10 +71,7 @@ class MainActivity : Activity(), ReaderHost {
     override val markOpacity: Int get() = opacity
     private var chosenColor = 0
     private var opacity = 55
-    private var soundMode = 1
-    private var keepAwake = true
-    private var brightness = 0.5f
-    private var originalBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+    private var volumeFlips = true
     private var chromeVisible = true
     private val prefs by lazy { getSharedPreferences("reader", MODE_PRIVATE) }
 
@@ -105,12 +102,11 @@ class MainActivity : Activity(), ReaderHost {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        originalBrightness = window.attributes.screenBrightness
-        soundMode = prefs.getInt("soundMode", 1)
+        // قديماً كان فيه 3 اختيارات للصوت (0 تقليب). دلوقتي تقليب أو عادي بس
+        volumeFlips = prefs.getBoolean("volumeFlips", prefs.getInt("soundMode", 0) == 0)
         chosenColor = prefs.getInt("color", 0).coerceIn(0, COLORS.size - 1)
         opacity = prefs.getInt("opacity", 55)
         night = prefs.getBoolean("night", false)
-        keepAwake = prefs.getBoolean("awake", true)
         orient = prefs.getInt("orient", 0).coerceIn(0, 2)
         applyOrientation()
         val oldRtl = prefs.getBoolean("rtl", false)
@@ -129,7 +125,7 @@ class MainActivity : Activity(), ReaderHost {
         rootFrame.addView(readerRoot, FrameLayout.LayoutParams(-1, -1))
         readerRoot.visibility = View.GONE
         setContentView(rootFrame)
-        if (keepAwake) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         applyBookDirection()
         refreshHome()
 
@@ -554,9 +550,6 @@ class MainActivity : Activity(), ReaderHost {
 
     private fun goHome() {
         closeDocument()
-        val a = window.attributes
-        a.screenBrightness = originalBrightness
-        window.attributes = a
         showHomeUi()
     }
 
@@ -838,27 +831,29 @@ class MainActivity : Activity(), ReaderHost {
 
     private fun showMoreOptions() {
         val items = arrayOf(
-            "طريقة التقليب والعرض",
-            "الصفحات والفهرس والبحث",
-            "لون وشفافية التمييز",
             "الانتقال إلى رقم صفحة",
-            "ملاءمة العرض" + onOff(fitWidth),
-            "الإعدادات",
-            "إغلاق الكتاب والعودة للمكتبة"
+            "ملاءمة الصفحة لعرض الشاشة" + onOff(fitWidth),
+            "أزرار الصوت تقلّب الصفحات" + onOff(volumeFlips),
+            "النص عربي (التحديد من اليمين لليسار)" + onOff(rtlText)
         )
         AlertDialog.Builder(this).setTitle("المزيد").setItems(items) { _, i ->
             when (i) {
-                0 -> showFlipDialog()
-                1 -> showPages(false)
-                2 -> showColorSettings()
-                3 -> gotoDialog()
-                4 -> {
+                0 -> gotoDialog()
+                1 -> {
                     fitWidth = !fitWidth
                     prefs.edit().putBoolean("fitWidth", fitWidth).apply()
                     reader.resetView()
                 }
-                5 -> showSettings()
-                6 -> goHome()
+                2 -> {
+                    volumeFlips = !volumeFlips
+                    prefs.edit().putBoolean("volumeFlips", volumeFlips).apply()
+                    toast(if (volumeFlips) "أزرار الصوت بتقلّب الصفحات" else "أزرار الصوت للتحكم في الصوت")
+                }
+                3 -> {
+                    rtlText = !rtlText
+                    prefs.edit().putBoolean("rtlText", rtlText).apply()
+                    toast(if (rtlText) "النص عربي: التحديد من اليمين لليسار" else "النص من اليسار لليمين")
+                }
                 else -> {}
             }
         }.show()
@@ -992,17 +987,6 @@ class MainActivity : Activity(), ReaderHost {
             }.setNegativeButton("إلغاء", null).show()
     }
 
-    private fun showColorSettings() {
-        AlertDialog.Builder(this).setTitle("لون التمييز")
-            .setSingleChoiceItems(COLOR_NAMES, chosenColor) { d, which ->
-                chosenColor = which
-                prefs.edit().putInt("color", which).apply()
-                buildPalette()
-                d.dismiss()
-                showOpacityDialog()
-            }.setNegativeButton("إلغاء", null).show()
-    }
-
     private fun opacityBox(initial: Int, onChange: (Int) -> Unit): LinearLayout {
         val box = LinearLayout(this)
         box.orientation = LinearLayout.VERTICAL
@@ -1050,70 +1034,14 @@ class MainActivity : Activity(), ReaderHost {
             }.setNegativeButton("إلغاء", null).show()
     }
 
-    private fun showSettings() {
-        val items = arrayOf(
-            "أزرار الصوت: تقليب / تمرير الصفحات" + onOff(soundMode == 0),
-            "أزرار الصوت: التحكم الطبيعي في الصوت" + onOff(soundMode == 1),
-            "أزرار الصوت: التحكم في السطوع" + onOff(soundMode == 2),
-            "منع إطفاء الشاشة أثناء القراءة" + onOff(keepAwake),
-            "النص عربي (اتجاه تحديد الكلام بالتمييز)" + onOff(rtlText),
-            "تطبيق اللون والشفافية الحاليين على كل التمييزات"
-        )
-        AlertDialog.Builder(this).setTitle("إعدادات القراءة").setItems(items) { _, which ->
-            when (which) {
-                0, 1, 2 -> {
-                    soundMode = which
-                    prefs.edit().putInt("soundMode", which).apply()
-                    toast("تم حفظ إعداد أزرار الصوت")
-                }
-                3 -> {
-                    keepAwake = !keepAwake
-                    prefs.edit().putBoolean("awake", keepAwake).apply()
-                    if (keepAwake) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                    else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                    toast(if (keepAwake) "منع إطفاء الشاشة مفعّل" else "تم إيقاف منع إطفاء الشاشة")
-                }
-                4 -> {
-                    rtlText = !rtlText
-                    prefs.edit().putBoolean("rtlText", rtlText).apply()
-                    toast(if (rtlText) "النص عربي: التحديد من اليمين لليسار" else "النص من اليسار لليمين")
-                }
-                5 -> {
-                    val st = store
-                    if (st != null) {
-                        rememberUndo()
-                        st.marks.forEach {
-                            it.color = COLORS[chosenColor]
-                            it.alpha = opacity
-                        }
-                        marksChanged()
-                        toast("تم تطبيق الإعداد على كل التمييزات")
-                    }
-                }
-                else -> {}
-            }
-        }.show()
-    }
-
     // =====================================================================
     // أزرار الصوت والرجوع
     // =====================================================================
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        if (doc != null && (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)) {
-            when (soundMode) {
-                0 -> {
-                    val up = keyCode == KeyEvent.KEYCODE_VOLUME_UP
-                    // في الوضع الرأسي: فوق = لفوق، تحت = لتحت. وفي الأفقي: رفع الصوت = الصفحة اللي بعدها.
-                    reader.pageStep(if (flipMode == 2) (if (up) -1 else 1) else (if (up) 1 else -1))
-                }
-                1 -> return super.onKeyDown(keyCode, event)
-                2 -> {
-                    brightness = (brightness + if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) 0.08f else -0.08f).coerceIn(0.05f, 1f)
-                    val a = window.attributes
-                    a.screenBrightness = brightness
-                    window.attributes = a
-                }
-            }
+        if (doc != null && volumeFlips && (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)) {
+            val up = keyCode == KeyEvent.KEYCODE_VOLUME_UP
+            // في الوضع الرأسي: فوق = لفوق، تحت = لتحت. وفي الأفقي: رفع الصوت = الصفحة اللي بعدها.
+            reader.pageStep(if (flipMode == 2) (if (up) -1 else 1) else (if (up) 1 else -1))
             return true
         }
         return super.onKeyDown(keyCode, event)
@@ -1133,9 +1061,6 @@ class MainActivity : Activity(), ReaderHost {
         renderExec.shutdownNow()
         hiExec.shutdownNow()
         aspectExec.shutdownNow()
-        val a = window.attributes
-        a.screenBrightness = originalBrightness
-        window.attributes = a
         super.onDestroy()
     }
 }
