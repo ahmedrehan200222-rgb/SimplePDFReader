@@ -41,6 +41,8 @@ class MainActivity : Activity(), ReaderHost {
         )
         val COLOR_NAMES = arrayOf("أصفر", "أخضر", "أزرق", "وردي", "برتقالي", "بنفسجي", "أحمر", "سماوي")
         const val PICK_PDF = 77
+        const val SAVE_BACKUP = 78
+        const val PICK_BACKUP = 79
     }
 
     // ---------- حالة الكتاب ----------
@@ -129,8 +131,160 @@ class MainActivity : Activity(), ReaderHost {
         applyBookDirection()
         refreshHome()
 
-        val last = prefs.getString("lastUri", null)
-        if (last != null) openUri(Uri.parse(last), true)
+        val viewed = intent?.takeIf { it.action == Intent.ACTION_VIEW }?.data
+        if (viewed != null && savedInstanceState == null) {
+            grabPermission(viewed, intent)
+            openUri(viewed, false)
+        } else {
+            val last = prefs.getString("lastUri", null)
+            if (last != null) openUri(Uri.parse(last), true)
+        }
+    }
+
+    /** لما ملف PDF يتفتح من تطبيق تاني (واتساب، مدير الملفات...). */
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val u = intent?.takeIf { it.action == Intent.ACTION_VIEW }?.data ?: return
+        grabPermission(u, intent)
+        openUri(u, false)
+    }
+
+    private fun grabPermission(u: Uri, data: Intent?) {
+        try {
+            contentResolver.takePersistableUriPermission(u, (data?.flags ?: 0) and Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        } catch (_: Exception) {
+        }
+    }
+
+    // =====================================================================
+    // هوية الكتاب: الاسم + الحجم. عشان التمييزات تتبع الملف حتى لو اتفتح من مكان تاني
+    // أو على جهاز جديد بعد الاسترجاع.
+    // =====================================================================
+    private fun querySize(uri: Uri): Long {
+        try {
+            contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { c ->
+                if (c.moveToFirst() && !c.isNull(0)) return c.getLong(0)
+            }
+        } catch (_: Exception) {
+        }
+        return 0L
+    }
+
+    private fun hasData(key: String): Boolean =
+        listOf("marks:", "pageNotes:", "pageInfo:").any { (prefs.getString(it + key, null) ?: "").length > 2 }
+
+    private fun resolveKey(uri: Uri, name: String, size: Long): String {
+        val fp = "$name|$size"
+        var key = prefs.getString("alias:$fp", null)
+        if (key == null) {
+            // كتاب اتفتح قبل كده من غير هوية: ندوّر عليه بالاسم في آخر الملفات
+            key = loadRecent().firstOrNull { it.second == name && hasData(it.first) }?.first
+        }
+        if (key == null) key = uri.toString()
+        prefs.edit().putString("alias:$fp", key).putString("fp:$key", fp).apply()
+        return key
+    }
+
+    // =====================================================================
+    // النسخة الاحتياطية
+    // =====================================================================
+    private fun backupJson(): Pair<String, Int> {
+        val recents = loadRecent().associate { it.first to it.second }
+        val keys = prefs.all.keys
+            .filter { it.startsWith("marks:") || it.startsWith("pageNotes:") || it.startsWith("pageInfo:") }
+            .map { it.substringAfter(':') }.toSet()
+        val books = JSONArray()
+        var skipped = 0
+        for (k in keys) {
+            if (!hasData(k)) continue
+            var fp = prefs.getString("fp:$k", null)
+            if (fp == null) {
+                val n = recents[k]
+                if (n != null) fp = "$n|${querySize(Uri.parse(k))}"
+            }
+            if (fp == null || fp.endsWith("|0")) {
+                skipped++
+                continue
+            }
+            books.put(
+                JSONObject().put("fp", fp)
+                    .put("name", fp.substringBeforeLast('|'))
+                    .put("marks", prefs.getString("marks:$k", "[]"))
+                    .put("notes", prefs.getString("pageNotes:$k", "{}"))
+                    .put("info", prefs.getString("pageInfo:$k", "{}"))
+                    .put("page", prefs.getInt("page:$k", 0))
+            )
+        }
+        val root = JSONObject().put("app", "SimplePDFReader").put("v", 1).put("books", books)
+        return Pair(root.toString(), skipped)
+    }
+
+    private fun startBackup() {
+        val (text, n) = backupJson()
+        val has = try {
+            JSONObject(text).getJSONArray("books").length()
+        } catch (_: Exception) {
+            0
+        }
+        if (has == 0) {
+            toast(if (n > 0) "افتح كل كتاب مرة واحدة الأول، وبعدين اعمل النسخة" else "مفيش تمييزات أو ملاحظات تتحفظ لسه")
+            return
+        }
+        val i = Intent(Intent.ACTION_CREATE_DOCUMENT)
+        i.addCategory(Intent.CATEGORY_OPENABLE)
+        i.type = "application/json"
+        val d = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
+        i.putExtra(Intent.EXTRA_TITLE, "pdfreader-backup-$d.json")
+        startActivityForResult(i, SAVE_BACKUP)
+    }
+
+    private fun startRestore() {
+        AlertDialog.Builder(this).setTitle("استرجاع نسخة احتياطية")
+            .setMessage("التمييزات والأسماء والتعليقات في النسخة هتحل محل الموجود لنفس الكتب. باقي الكتب مش هتتأثر.")
+            .setPositiveButton("اختيار الملف") { _, _ ->
+                val i = Intent(Intent.ACTION_OPEN_DOCUMENT)
+                i.addCategory(Intent.CATEGORY_OPENABLE)
+                i.type = "*/*"
+                startActivityForResult(i, PICK_BACKUP)
+            }.setNegativeButton("إلغاء", null).show()
+    }
+
+    private fun writeBackup(u: Uri) {
+        try {
+            val text = backupJson().first
+            contentResolver.openOutputStream(u, "wt")?.use { it.write(text.toByteArray(Charsets.UTF_8)) }
+                ?: throw IOException("تعذر الكتابة")
+            toast("تم حفظ النسخة الاحتياطية")
+        } catch (e: Exception) {
+            toast("فشل حفظ النسخة: ${e.message}")
+        }
+    }
+
+    private fun readBackup(u: Uri) {
+        try {
+            val text = contentResolver.openInputStream(u)?.use { String(it.readBytes(), Charsets.UTF_8) }
+                ?: throw IOException("تعذر القراءة")
+            val root = JSONObject(text)
+            if (root.optString("app") != "SimplePDFReader") throw IOException("الملف ده مش نسخة احتياطية من التطبيق")
+            val books = root.getJSONArray("books")
+            val ed = prefs.edit()
+            for (i in 0 until books.length()) {
+                val b = books.getJSONObject(i)
+                val fp = b.getString("fp")
+                val key = prefs.getString("alias:$fp", null) ?: "bk:$fp"
+                ed.putString("alias:$fp", key).putString("fp:$key", fp)
+                ed.putString("marks:$key", b.optString("marks", "[]"))
+                ed.putString("pageNotes:$key", b.optString("notes", "{}"))
+                ed.putString("pageInfo:$key", b.optString("info", "{}"))
+                ed.putInt("page:$key", b.optInt("page", 0))
+            }
+            ed.apply()
+            if (doc != null) goHome()
+            toast("تم استرجاع ${books.length()} كتاب. افتح الكتاب وهتلاقي تمييزاتك")
+        } catch (e: Exception) {
+            toast("فشل الاسترجاع: ${e.message}")
+        }
     }
 
     // =====================================================================
@@ -169,6 +323,18 @@ class MainActivity : Activity(), ReaderHost {
         recentBox = LinearLayout(this)
         recentBox.orientation = LinearLayout.VERTICAL
         col.addView(recentBox, lp(-1, -2))
+
+        val bk = LinearLayout(this)
+        bk.orientation = LinearLayout.HORIZONTAL
+        val b1 = lp(0, dp(48), 1f)
+        b1.setMargins(0, 0, dp(4), 0)
+        val b2 = lp(0, dp(48), 1f)
+        b2.setMargins(dp(4), 0, 0, 0)
+        bk.addView(uiButton("حفظ نسخة احتياطية", false, 14f) { startBackup() }, b1)
+        bk.addView(uiButton("استرجاع نسخة", false, 14f) { startRestore() }, b2)
+        val bkp = lp(-1, -2)
+        bkp.topMargin = dp(32)
+        col.addView(bk, bkp)
 
         scroll.addView(col)
         return scroll
@@ -494,6 +660,10 @@ class MainActivity : Activity(), ReaderHost {
             } catch (_: Exception) {
             }
             openUri(u, false)
+        } else if (requestCode == SAVE_BACKUP && resultCode == RESULT_OK) {
+            data?.data?.let { writeBackup(it) }
+        } else if (requestCode == PICK_BACKUP && resultCode == RESULT_OK) {
+            data?.data?.let { readBackup(it) }
         }
     }
 
@@ -510,14 +680,17 @@ class MainActivity : Activity(), ReaderHost {
                 }
                 throw e
             }
-            val key = uri.toString()
+            val uriStr = uri.toString()
+            val name = queryName(uri)
+            val size = querySize(uri).takeIf { it > 0 } ?: pfd.statSize.coerceAtLeast(0)
+            val key = resolveKey(uri, name, size)
             doc = d
             docKey = key
-            docName = queryName(uri)
+            docName = name
             store = DocStore(prefs, key)
             thumbs = ThumbLoader(d, dp(120))
-            prefs.edit().putString("lastUri", key).apply()
-            addRecent(key, docName)
+            prefs.edit().putString("lastUri", uriStr).apply()
+            addRecent(uriStr, docName)
             showReaderUi()
             seek.max = (d.pageCount - 1).coerceAtLeast(0)
             val start = prefs.getInt("page:$key", 0).coerceIn(0, (d.pageCount - 1).coerceAtLeast(0))
@@ -860,7 +1033,9 @@ class MainActivity : Activity(), ReaderHost {
             "الانتقال إلى رقم صفحة",
             "ملاءمة الصفحة لعرض الشاشة" + onOff(fitWidth),
             "أزرار الصوت تقلّب الصفحات" + onOff(volumeFlips),
-            "النص عربي (التحديد من اليمين لليسار)" + onOff(rtlText)
+            "النص عربي (التحديد من اليمين لليسار)" + onOff(rtlText),
+            "حفظ نسخة احتياطية من التمييزات",
+            "استرجاع نسخة احتياطية"
         )
         AlertDialog.Builder(this).setTitle("المزيد").setItems(items) { _, i ->
             when (i) {
@@ -880,6 +1055,8 @@ class MainActivity : Activity(), ReaderHost {
                     prefs.edit().putBoolean("rtlText", rtlText).apply()
                     toast(if (rtlText) "النص عربي: التحديد من اليمين لليسار" else "النص من اليسار لليمين")
                 }
+                4 -> startBackup()
+                5 -> startRestore()
                 else -> {}
             }
         }.show()
