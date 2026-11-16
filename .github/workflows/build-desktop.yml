@@ -1,0 +1,58 @@
+name: Build Windows desktop app
+
+on:
+  push:
+    branches: [ "**" ]
+    paths:
+      - "desktop/**"
+      - ".github/workflows/build-desktop.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build Windows installer
+        run: npm run dist
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      - name: List output
+        shell: bash
+        run: ls -la dist
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimplePDFReader-Setup
+          path: desktop/dist/*.exe
+
+      - name: Publish installer as a release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="desktop-$(echo "$GITHUB_REF_NAME" | tr '/' '-')"
+          gh release delete "$TAG" --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" || true
+          EXE=$(ls dist/*.exe | head -n 1)
+          cp "$EXE" SimplePDFReader-Setup.exe
+          gh release create "$TAG" SimplePDFReader-Setup.exe --repo "$GITHUB_REPOSITORY" --prerelease \
+            --title "Windows installer ($GITHUB_REF_NAME)" \
+            --notes "Auto-built from commit $GITHUB_SHA"

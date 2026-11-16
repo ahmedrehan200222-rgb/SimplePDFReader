@@ -103,7 +103,8 @@ body.dragging #home { outline: 3px dashed var(--accent); outline-offset: -12px; 
 .page canvas.pdf.night { filter: invert(1) hue-rotate(180deg); }
 .page canvas.pdf.enh { filter: grayscale(1) contrast(1.45) brightness(1.04); }
 .page canvas.pdf.night.enh { filter: grayscale(1) contrast(1.45) invert(1) hue-rotate(180deg); }
-.page canvas.ov { pointer-events: none; }
+.page canvas.ov { pointer-events: none; mix-blend-mode: multiply; }
+body.night .page canvas.ov { mix-blend-mode: normal; }
 .page .boxes { position: absolute; inset: 0; pointer-events: none; }
 .page .tbox {
   position: absolute; pointer-events: auto; cursor: pointer; white-space: pre-wrap; line-height: 1.3;
