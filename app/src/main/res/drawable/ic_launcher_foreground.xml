@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- الصفحة -->
+    <path android:fillColor="#FFFAF6EC" android:pathData="M33,26h42a4,4 0 0 1 4,4v48a4,4 0 0 1 -4,4H33a4,4 0 0 1 -4,-4V30a4,4 0 0 1 4,-4z" />
+    <!-- التمييز -->
+    <path android:fillColor="#FFFFD23F" android:pathData="M34,46h40v9H34z" />
+    <!-- السطور -->
+    <path android:strokeColor="#FF4A4F5C" android:strokeWidth="3" android:strokeLineCap="round" android:pathData="M37,38h34M37,50.5h34M37,63h34M37,72h22" />
+</vector>
