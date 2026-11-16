@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.graphics.Typeface
 import android.net.Uri
 import android.os.Bundle
@@ -32,6 +33,9 @@ import java.io.IOException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
+/** تبويب مفتوح: ملف PDF واحد (الصفحة اللي وقفت عندها محفوظة لكل كتاب لوحده). */
+private data class Tab(val uri: String, val name: String, val key: String)
+
 class MainActivity : Activity(), ReaderHost {
 
     companion object {
@@ -43,6 +47,7 @@ class MainActivity : Activity(), ReaderHost {
         const val PICK_PDF = 77
         const val SAVE_BACKUP = 78
         const val PICK_BACKUP = 79
+        const val MAX_TABS = 8
     }
 
     // ---------- حالة الكتاب ----------
@@ -101,6 +106,10 @@ class MainActivity : Activity(), ReaderHost {
     private lateinit var grayBtn: IconView
     private lateinit var flipBtn: IconView
     private var pagesScreen: PagesScreen? = null
+    private lateinit var tabScroll: HorizontalScrollView
+    private lateinit var tabRow: LinearLayout
+    private val tabs = ArrayList<Tab>()
+    private var activeTab = -1
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -136,8 +145,136 @@ class MainActivity : Activity(), ReaderHost {
             grabPermission(viewed, intent)
             openUri(viewed, false)
         } else {
-            val last = prefs.getString("lastUri", null)
+            loadTabs()
+            val last = tabs.getOrNull(activeTab)?.uri ?: prefs.getString("lastUri", null)
             if (last != null) openUri(Uri.parse(last), true)
+        }
+    }
+
+    // =====================================================================
+    // التبويبات (زي المتصفح): كل تبويب كتاب. الكتاب الفعّال بس هو اللي بياخد رامات.
+    // =====================================================================
+    private fun loadTabs() {
+        tabs.clear()
+        try {
+            val a = JSONArray(prefs.getString("tabs", "[]") ?: "[]")
+            for (i in 0 until a.length()) {
+                val o = a.getJSONObject(i)
+                tabs.add(Tab(o.getString("u"), o.optString("n", "ملف PDF"), o.optString("k", "")))
+            }
+        } catch (_: Exception) {
+        }
+        activeTab = prefs.getInt("activeTab", 0).coerceIn(0, (tabs.size - 1).coerceAtLeast(0))
+        if (tabs.isEmpty()) activeTab = -1
+        rebuildTabBar()
+    }
+
+    private fun saveTabs() {
+        val a = JSONArray()
+        for (t in tabs) a.put(JSONObject().put("u", t.uri).put("n", t.name).put("k", t.key))
+        prefs.edit().putString("tabs", a.toString()).putInt("activeTab", activeTab).apply()
+    }
+
+    private fun registerTab(uriStr: String, name: String, key: String) {
+        val t = Tab(uriStr, name, key)
+        val i = tabs.indexOfFirst { it.key == key || it.uri == uriStr }
+        if (i >= 0) tabs[i] = t else tabs.add(t)
+        while (tabs.size > MAX_TABS) {
+            val r = tabs.indexOfFirst { it.key != key }
+            if (r < 0) break
+            tabs.removeAt(r)
+        }
+        activeTab = tabs.indexOfFirst { it.key == key }
+        saveTabs()
+        rebuildTabBar()
+    }
+
+    private fun dropTab(uriStr: String) {
+        val i = tabs.indexOfFirst { it.uri == uriStr }
+        if (i < 0) return
+        tabs.removeAt(i)
+        if (i < activeTab) activeTab-- else if (i == activeTab) activeTab = -1
+        saveTabs()
+        rebuildTabBar()
+    }
+
+    private fun switchTab(i: Int) {
+        val t = tabs.getOrNull(i) ?: return
+        if (i == activeTab && doc != null) return
+        openUri(Uri.parse(t.uri), false)
+    }
+
+    private fun closeTab(i: Int) {
+        if (i !in tabs.indices) return
+        val wasActive = i == activeTab
+        tabs.removeAt(i)
+        if (i < activeTab) activeTab--
+        if (wasActive) {
+            if (tabs.isEmpty()) {
+                activeTab = -1
+                saveTabs()
+                goHome()
+                return
+            }
+            activeTab = i.coerceAtMost(tabs.size - 1)
+            saveTabs()
+            openUri(Uri.parse(tabs[activeTab].uri), false)
+        } else {
+            saveTabs()
+            rebuildTabBar()
+        }
+    }
+
+    private fun applyTabBarVisibility() {
+        tabScroll.visibility = if (chromeVisible && tabs.size >= 2) View.VISIBLE else View.GONE
+    }
+
+    private fun rebuildTabBar() {
+        tabRow.removeAllViews()
+        var activeView: View? = null
+        for ((i, t) in tabs.withIndex()) {
+            val on = i == activeTab
+            val item = LinearLayout(this)
+            item.orientation = LinearLayout.HORIZONTAL
+            item.gravity = Gravity.CENTER_VERTICAL
+            item.background = box(if (on) Theme.INK else Theme.SURFACE, if (on) Theme.INK else Theme.LINE, 1, 18)
+            val label = TextView(this)
+            label.text = t.name.removeSuffix(".pdf").removeSuffix(".PDF")
+            label.textSize = 14f
+            label.maxLines = 1
+            label.maxWidth = dp(150)
+            label.ellipsize = TextUtils.TruncateAt.END
+            label.setTextColor(if (on) Color.WHITE else Theme.INK)
+            label.setPadding(dp(14), dp(7), dp(4), dp(7))
+            label.setOnClickListener { switchTab(i) }
+            val x = TextView(this)
+            x.text = "✕"
+            x.textSize = 13f
+            x.gravity = Gravity.CENTER
+            x.setTextColor(if (on) Color.WHITE else Theme.MUTED)
+            x.setPadding(dp(8), dp(7), dp(12), dp(7))
+            x.setOnClickListener { closeTab(i) }
+            item.addView(label, lp(-2, -2))
+            item.addView(x, lp(-2, -2))
+            val p = lp(-2, -2)
+            p.setMargins(dp(3), 0, dp(3), 0)
+            tabRow.addView(item, p)
+            if (on) activeView = item
+        }
+        val plus = TextView(this)
+        plus.text = "＋"
+        plus.textSize = 18f
+        plus.gravity = Gravity.CENTER
+        plus.setTextColor(Theme.INK)
+        plus.background = box(Theme.SURFACE, Theme.LINE, 1, 18)
+        plus.setOnClickListener { goHome() }
+        tabRow.addView(plus, lp(dp(44), dp(34)))
+        applyTabBarVisibility()
+        val av = activeView
+        if (av != null) {
+            tabScroll.post {
+                tabScroll.scrollTo(kotlin.math.max(0, av.left - (tabScroll.width - av.width) / 2), 0)
+            }
         }
     }
 
@@ -456,6 +593,16 @@ class MainActivity : Activity(), ReaderHost {
         fp.rightMargin = dp(4)
         topBar.addView(iconButton(Icon.MORE, "المزيد", { toast(it) }) { showMoreOptions() }, fp)
         col.addView(topBar, lp(-1, -2))
+        tabScroll = HorizontalScrollView(this)
+        tabScroll.isHorizontalScrollBarEnabled = false
+        tabScroll.setBackgroundColor(Theme.PAPER)
+        tabRow = LinearLayout(this)
+        tabRow.orientation = LinearLayout.HORIZONTAL
+        tabRow.gravity = Gravity.CENTER_VERTICAL
+        tabRow.setPadding(dp(6), dp(4), dp(6), dp(4))
+        tabScroll.addView(tabRow, FrameLayout.LayoutParams(-2, -2))
+        tabScroll.visibility = View.GONE
+        col.addView(tabScroll, lp(-1, -2))
         col.addView(divider(), lp(-1, dp(1)))
 
         // منطقة القراءة
@@ -622,6 +769,7 @@ class MainActivity : Activity(), ReaderHost {
         val v = if (visible) View.VISIBLE else View.GONE
         topBar.visibility = v
         bottomBar.visibility = v
+        applyTabBarVisibility()
     }
 
     private fun pageLabel(i: Int): String = "${i + 1} / ${doc?.pageCount ?: 0}"
@@ -691,6 +839,7 @@ class MainActivity : Activity(), ReaderHost {
             thumbs = ThumbLoader(d, dp(120))
             prefs.edit().putString("lastUri", uriStr).apply()
             addRecent(uriStr, docName)
+            registerTab(uriStr, docName, key)
             showReaderUi()
             seek.max = (d.pageCount - 1).coerceAtLeast(0)
             val start = prefs.getInt("page:$key", 0).coerceIn(0, (d.pageCount - 1).coerceAtLeast(0))
@@ -709,6 +858,7 @@ class MainActivity : Activity(), ReaderHost {
             showPage(start)
         } catch (e: Exception) {
             closeDocument()
+            dropTab(uri.toString())
             showHomeUi()
             if (!quiet) toast("تعذر فتح الملف: ${e.message}")
         }
