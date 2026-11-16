@@ -335,16 +335,18 @@ class MainActivity : Activity(), ReaderHost {
         bottomBar.addView(navRow, lp(-1, -2))
 
         // الأدوات: صف واحد بأيقونات (الضغط المطوّل على أي أيقونة بيظهر اسمها)
-        val tools = LinearLayout(this)
-        tools.orientation = LinearLayout.HORIZONTAL
+        // على الموبايل (شاشة ضيقة) الأدوات بتتقسم على صفين عشان تفضل كبيرة وسهلة الضغط
+        toolRowA = LinearLayout(this)
+        toolRowA.orientation = LinearLayout.HORIZONTAL
+        toolRowB = LinearLayout(this)
+        toolRowB.orientation = LinearLayout.HORIZONTAL
         val tp = lp(-1, -2)
         tp.topMargin = dp(4)
-        bottomBar.addView(tools, tp)
+        bottomBar.addView(toolRowA, tp)
+        bottomBar.addView(toolRowB, lp(-1, -2))
         fun tool(icon: Icon, label: String, action: () -> Unit): IconView {
             val b = iconButton(icon, label, { toast(it) }, action)
-            val p = lp(0, dp(46), 1f)
-            p.setMargins(dp(2), 0, dp(2), 0)
-            tools.addView(b, p)
+            toolButtons.add(b)
             return b
         }
         hlBtn = tool(Icon.PEN, "تمييز") { switchMode(if (mode == 1) 0 else 1) }
@@ -359,10 +361,34 @@ class MainActivity : Activity(), ReaderHost {
         grayBtn = tool(Icon.CONTRAST, "أبيض وأسود") { toggleGray() }
         nightBtn.active = night
         grayBtn.active = grayscale
+        layoutTools()
         updateUndoUi()
 
         col.addView(bottomBar, lp(-1, -2))
         return col
+    }
+
+    private lateinit var toolRowA: LinearLayout
+    private lateinit var toolRowB: LinearLayout
+    private val toolButtons = ArrayList<IconView>()
+
+    /** شاشة عريضة: صف واحد. شاشة ضيقة (موبايل طولي): صفين، 5 أدوات في كل صف. */
+    private fun layoutTools() {
+        val narrow = resources.configuration.screenWidthDp < 560
+        toolRowA.removeAllViews()
+        toolRowB.removeAllViews()
+        val perRow = if (narrow) (toolButtons.size + 1) / 2 else toolButtons.size
+        for ((i, b) in toolButtons.withIndex()) {
+            val p = lp(0, dp(if (narrow) 48 else 46), 1f)
+            p.setMargins(dp(2), if (i >= perRow) dp(4) else 0, dp(2), 0)
+            (if (i < perRow) toolRowA else toolRowB).addView(b, p)
+        }
+        toolRowB.visibility = if (narrow) View.VISIBLE else View.GONE
+    }
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (toolButtons.isNotEmpty()) layoutTools()
     }
 
     private fun styleHint(): String =
