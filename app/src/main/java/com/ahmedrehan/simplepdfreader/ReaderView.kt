@@ -10,7 +10,6 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.view.MotionEvent
-import android.view.HapticFeedbackConstants
 import android.view.ScaleGestureDetector
 import android.view.VelocityTracker
 import android.view.View
@@ -667,25 +666,37 @@ class ReaderView(ctx: Context, private val host: ReaderHost) : View(ctx) {
     }
 
     /**
-     * في وضع التمييز: السحب العادي تمرير، والتمييز بيبدأ بضغطة مطوّلة (من غير تحريك) وبعدها اسحب.
+     * في وضع التمييز: لو اللمسة بدأت على الكلام (حبر قريب من الإصبع) السحب بيميّز،
+     * ولو بدأت في الفراغ (الهامش أو بين الفقرات) السحب بيعمل تمرير.
      */
-    private val holdRun = Runnable {
-        if (host.mode != 1 || multiTouch || panned || brushDrawing || selecting) return@Runnable
-        val h = hitPage(downX, downY) ?: return@Runnable
-        performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-        if (host.highlightStyle == 1) {
-            brushDrawing = true
-            brushPage = h.page
-            brushStart = Pair(h.fx, h.fy)
-        } else {
-            selecting = true
-            previewMarks = emptyList()
+    private fun startsOnText(x: Float, y: Float): Boolean {
+        val h = hitPage(x, y) ?: return false
+        val b = cache[h.page]
+        if (b == null || b.isRecycled) return false
+        val p = pixelsFor(h.page, b)
+        val bw = b.width
+        val bh = b.height
+        val cx = (h.fx * bw).toInt().coerceIn(0, bw - 1)
+        val cy = (h.fy * bh).toInt().coerceIn(0, bh - 1)
+        val hx = max(6, (bw * 0.02f).toInt())
+        val hy = max(3, (bh * 0.004f).toInt())
+        var n = 0
+        for (yy in max(0, cy - hy)..min(bh - 1, cy + hy)) {
+            var xx = max(0, cx - hx)
+            val xe = min(bw - 1, cx + hx)
+            while (xx <= xe) {
+                val c = p[yy * bw + xx]
+                val lum = (((c shr 16) and 255) * 30 + ((c shr 8) and 255) * 59 + (c and 255) * 11) / 100
+                if (lum < 178 && ++n >= 3) return true
+                xx += 2
+            }
         }
-        invalidate()
+        return false
     }
 
+    private var onText = false
+
     private fun resetGesture() {
-        removeCallbacks(holdRun)
         selecting = false
         brushDrawing = false
         brushStart = null
@@ -712,7 +723,18 @@ class ReaderView(ctx: Context, private val host: ReaderHost) : View(ctx) {
                 multiTouch = false
                 panned = false
                 resetGesture()
-                if (host.mode == 1) postDelayed(holdRun, 350L)
+                onText = false
+                if (host.mode == 1 && startsOnText(e.x, e.y)) {
+                    onText = true
+                    if (host.highlightStyle == 1) {
+                        val h = hitPage(e.x, e.y)
+                        if (h != null) {
+                            brushDrawing = true
+                            brushPage = h.page
+                            brushStart = Pair(h.fx, h.fy)
+                        }
+                    }
+                }
                 parent?.requestDisallowInterceptTouchEvent(true)
                 return true
             }
@@ -747,19 +769,19 @@ class ReaderView(ctx: Context, private val host: ReaderHost) : View(ctx) {
                     invalidate()
                     return true
                 }
-                if (selecting) {
-                    if (hypot(e.x - lastCalcX, e.y - lastCalcY) > 3f) {
-                        lastCalcX = e.x
-                        lastCalcY = e.y
-                        previewMarks = buildMarks(downX, downY, e.x, e.y, false)
+                if (host.mode == 1 && onText && !panned) {
+                    if (selecting || hypot(e.x - downX, e.y - downY) > slop) {
+                        selecting = true
+                        if (hypot(e.x - lastCalcX, e.y - lastCalcY) > 3f) {
+                            lastCalcX = e.x
+                            lastCalcY = e.y
+                            previewMarks = buildMarks(downX, downY, e.x, e.y, false)
+                        }
+                        invalidate()
                     }
-                    invalidate()
                     return true
                 }
-                if (!panned && hypot(e.x - downX, e.y - downY) > slop) {
-                    panned = true
-                    removeCallbacks(holdRun)
-                }
+                if (panned || hypot(e.x - downX, e.y - downY) > slop) panned = true
                 panX += e.x - lastX
                 panY += e.y - lastY
                 clampPan()
@@ -770,7 +792,6 @@ class ReaderView(ctx: Context, private val host: ReaderHost) : View(ctx) {
                 return true
             }
             MotionEvent.ACTION_UP -> {
-                removeCallbacks(holdRun)
                 parent?.requestDisallowInterceptTouchEvent(false)
                 scheduleUpdate()
                 if (multiTouch) {
@@ -780,16 +801,15 @@ class ReaderView(ctx: Context, private val host: ReaderHost) : View(ctx) {
                     return true
                 }
                 if (brushDrawing) {
-                    finishBrush(e.x, e.y)
+                    val drew = brushSegment(e.x, e.y) != null
+                    if (drew) finishBrush(e.x, e.y)
                     resetGesture()
                     invalidate()
-                    return true
-                }
-                if (selecting) {
-                    val far = hypot(e.x - downX, e.y - downY) > slop
-                    val marks = if (far) buildMarks(downX, downY, e.x, e.y, false) else emptyList()
+                    if (drew) return true
+                } else if (selecting) {
+                    val marks = buildMarks(downX, downY, e.x, e.y, false)
                     resetGesture()
-                    if (far) commitMarks(marks)
+                    commitMarks(marks)
                     invalidate()
                     return true
                 }
