@@ -1,0 +1,36 @@
+{
+  "name": "simple-pdf-reader-desktop",
+  "version": "0.1.0",
+  "description": "قارئ PDF للكمبيوتر مع تمييز وملاحظات، متوافق مع تطبيق التابلت",
+  "main": "main.js",
+  "author": "Rehan",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "vendor": "node scripts/copy-vendor.js",
+    "start": "npm run vendor && electron .",
+    "dist": "npm run vendor && electron-builder --win --publish never"
+  },
+  "devDependencies": {
+    "electron": "31.7.7",
+    "electron-builder": "24.13.3",
+    "pdf-lib": "1.17.1",
+    "pdfjs-dist": "4.4.168"
+  },
+  "build": {
+    "appId": "com.ahmedrehan.simplepdfreader.desktop",
+    "productName": "Simple PDF Reader",
+    "files": ["main.js", "preload.js", "app/**/*", "package.json"],
+    "directories": { "output": "dist", "buildResources": "build" },
+    "artifactName": "SimplePDFReader-Setup-${version}.${ext}",
+    "fileAssociations": [{ "ext": "pdf", "name": "PDF", "role": "Viewer" }],
+    "win": { "target": [{ "target": "nsis", "arch": ["x64"] }], "icon": "build/icon.ico" },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}

@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Simple PDF Reader</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- المكتبة -->
+<section id="home">
+  <div class="home-inner">
+    <h1>قارئ PDF</h1>
+    <p class="sub">اقرأ، ميّز السطور المهمة، وسمّ الصفحات وعلّق عليها. التمييزات بتتبادل مع تطبيق التابلت.</p>
+    <button id="btnOpen" class="btn primary big">فتح ملف PDF</button>
+    <div id="dropHint" class="hint">أو اسحب الملف وسيبه هنا</div>
+    <h2 id="recentTitle">آخر الملفات</h2>
+    <div id="recentList"></div>
+    <div class="row gap">
+      <button id="btnBackup" class="btn">حفظ نسخة احتياطية</button>
+      <button id="btnRestore" class="btn">استرجاع نسخة</button>
+    </div>
+    <div id="syncNote" class="hint">للمزامنة مع التابلت: احفظ نسخة احتياطية من هنا، وابعتها للتابلت واسترجعها هناك (والعكس).</div>
+  </div>
+</section>
+
+<!-- القراءة -->
+<section id="app" hidden>
+  <header id="top">
+    <button id="btnHome" class="btn" title="المكتبة">المكتبة</button>
+    <div id="docTitle" class="doc-title"></div>
+    <div class="spacer"></div>
+    <div class="group">
+      <button id="btnPrev" class="btn sq" title="الصفحة السابقة">‹</button>
+      <input id="pageInput" class="page-input" type="text" inputmode="numeric" title="رقم الصفحة">
+      <span id="pageTotal" class="muted"></span>
+      <button id="btnNext" class="btn sq" title="الصفحة التالية">›</button>
+    </div>
+    <div class="group">
+      <button id="btnZoomOut" class="btn sq" title="تصغير (Ctrl + -)">−</button>
+      <button id="zoomLabel" class="btn zoom" title="الرجوع لملاءمة العرض">100%</button>
+      <button id="btnZoomIn" class="btn sq" title="تكبير (Ctrl + +)">+</button>
+    </div>
+    <button id="btnMode" class="btn" title="طريقة العرض">عرض متواصل</button>
+    <button id="btnPanel" class="btn" title="الصفحات والفهرس والبحث (Ctrl+F)">الصفحات</button>
+    <button id="btnReview" class="btn" title="ملخص المراجعة والتصدير">المراجعة</button>
+    <button id="btnMore" class="btn" title="المزيد">⋯</button>
+  </header>
+
+  <div id="tools">
+    <div class="group" id="toolGroup">
+      <button class="btn tool" data-tool="hand" title="تحريك (H)">تحريك</button>
+      <button class="btn tool" data-tool="hl" title="تمييز الكلام (T)">تمييز</button>
+      <button class="btn tool" data-tool="brush" title="فرشاة مستقيمة (B)">فرشاة</button>
+      <button class="btn tool" data-tool="eraser" title="ممحاة (E)">ممحاة</button>
+      <button class="btn tool" data-tool="text" title="إضافة نص (X)">نص</button>
+    </div>
+    <div class="group" id="palette"></div>
+    <div class="group">
+      <label class="muted small" for="opacity">الشفافية</label>
+      <input id="opacity" type="range" min="10" max="90" step="5" value="55">
+    </div>
+    <div class="group">
+      <button id="btnUndo" class="btn" title="تراجع (Ctrl+Z)">تراجع</button>
+      <button id="btnRedo" class="btn" title="إعادة (Ctrl+Y)">إعادة</button>
+    </div>
+    <div class="group">
+      <button id="btnTag" class="btn" title="اسم الصفحة والوسوم والتعليق (P)">وسم الصفحة</button>
+      <button id="btnNight" class="btn" title="الوضع الليلي">ليلي</button>
+      <button id="btnEnhance" class="btn" title="تحسين الصفحات الممسوحة: تباين أعلى وأبيض وأسود">تحسين الممسوح</button>
+    </div>
+    <div id="toolHint" class="tool-hint"></div>
+  </div>
+
+  <main id="main">
+    <aside id="panel" hidden>
+      <div class="tabs">
+        <button class="tab on" data-tab="pages">الصفحات</button>
+        <button class="tab" data-tab="outline">الفهرس</button>
+      </div>
+      <div id="pagesTab">
+        <input id="search" class="search" type="search" placeholder="بحث في الأسماء والتعليقات والوسوم">
+        <div id="chips" class="chips"></div>
+        <div id="pageCount" class="muted small"></div>
+        <div id="pageList"></div>
+      </div>
+      <div id="outlineTab" hidden></div>
+    </aside>
+    <div id="scroller"><div id="pages"></div></div>
+  </main>
+</section>
+
+<div id="toast" hidden></div>
+<div id="overlay" hidden></div>
+<input id="fileInput" type="file" accept="application/pdf,.pdf" hidden>
+<input id="restoreInput" type="file" accept="application/json,.json" hidden>
+
+<script src="vendor/pdf-lib.min.js"></script>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
