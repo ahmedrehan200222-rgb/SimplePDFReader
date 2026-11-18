@@ -6,12 +6,13 @@ import {
 import { Viewer, paintMark } from './viewer.js';
 import { $, el, toast, modal, closeModal, isModalOpen, download, debounce } from './ui.js';
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.mjs', import.meta.url).href;
-const PDF_OPTS = {
-  cMapUrl: new URL('../vendor/cmaps/', import.meta.url).href,
-  cMapPacked: true,
-  standardFontDataUrl: new URL('../vendor/standard_fonts/', import.meta.url).href
-};
+// نسخة الويب المدمجة بتحط __WORKER_URL__ (عامل pdf.js كـ blob)، ونسخة الكمبيوتر بتحمّله من الملفات.
+const WEB = !!window.__WEB_BUILD__;
+const rel = (p) => new URL(p, import.meta.url).href;
+pdfjsLib.GlobalWorkerOptions.workerSrc = WEB ? window.__WORKER_URL__ : rel('../vendor/pdf.worker.min.mjs');
+const PDF_OPTS = WEB
+  ? {}
+  : { cMapUrl: rel('../vendor/cmaps/'), cMapPacked: true, standardFontDataUrl: rel('../vendor/standard_fonts/') };
 
 const isDesktop = !!window.desktop;
 const TOOL_HINTS = {

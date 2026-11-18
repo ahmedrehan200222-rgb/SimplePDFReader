@@ -8,6 +8,7 @@
   "private": true,
   "scripts": {
     "vendor": "node scripts/copy-vendor.js",
+    "web": "npm run vendor && node scripts/build-web.js",
     "start": "npm run vendor && electron .",
     "dist": "npm run vendor && electron-builder --win --publish never"
   },

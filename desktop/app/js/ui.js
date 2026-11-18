@@ -79,7 +79,24 @@ export function isModalOpen() {
   return !$('overlay').hidden;
 }
 
-export function download(name, data, mime) {
+/** حفظ ملف. جوه صفحة الويب المنشورة بنستخدم إمكانية downloads، وغير كده بنزل عادي. */
+export async function download(name, data, mime) {
+  try {
+    if (window.claude && window.claude.use) {
+      const dl = await window.claude.use('downloads');
+      if (dl) {
+        try {
+          await dl.save({ filename: name, data });
+        } catch (e) {
+          if (e && e.code === 'declined') return;
+          toast('تعذر حفظ الملف: ' + (e && e.message ? e.message : e));
+        }
+        return;
+      }
+    }
+  } catch (e) {
+    /* نكمّل بالطريقة العادية */
+  }
   const blob = new Blob([data], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = el('a', { href: url, download: name });

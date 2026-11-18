@@ -2,3 +2,4 @@ node_modules
 dist
 app/vendor
 test/out
+web
