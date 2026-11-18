@@ -28,6 +28,7 @@ interface ReaderHost {
     val highlightStyle: Int  // 0 تمييز الجزء المحدد، 1 فرشاة مستقيمة
     val markColor: Int
     val markOpacity: Int
+    val brushWidth: Float
     val fitWidth: Boolean
     val night: Boolean
     val grayscale: Boolean
@@ -362,9 +363,28 @@ class ReaderView(ctx: Context, private val host: ReaderHost) : View(ctx) {
         // نأجّل إعادة التموضع لحد ما التخطيط يخلص عشان ما نغيّر الواجهة وسط عملية القياس
         post {
             if (pageCount > 0 && width > 0 && height > 0) {
-                if (pg != null) goToPage(pg.first, pg.second, pg.third) else goToPage(current, false, true)
+                if (pg != null) goToPage(pg.first, pg.second, pg.third)
+                else if (oldw > 0 && oldh > 0) refit(w.toFloat() / oldw)
+                else goToPage(current, false, true)
             }
         }
+    }
+
+    // تغيّر المقاس (إظهار/إخفاء الأدوات أو تدوير): نحافظ على المكان والتكبير بدل الرجوع لأول الصفحة
+    private fun refit(ratio: Float) {
+        scroller.forceFinished(true)
+        dropHi()
+        relayout()
+        resetGesture()
+        if (!continuous && !host.fitWidth && zoom <= 1.001f) {
+            goToPage(current, false, true)
+            return
+        }
+        panX *= ratio
+        panY *= ratio
+        clampPan()
+        scheduleUpdate()
+        invalidate()
     }
 
     override fun onDetachedFromWindow() {
@@ -519,13 +539,16 @@ class ReaderView(ctx: Context, private val host: ReaderHost) : View(ctx) {
     // =====================================================================
     // الرسم
     // =====================================================================
+    private fun brushStroke(m: Mark, pageW: Float): Float =
+        if (m.width > 0f) max(2f, pageW * m.width) else max(7f, pageW * 0.009f)
+
     private fun drawMark(c: Canvas, m: Mark, r: RectF) {
         paint.color = m.color
         paint.alpha = ((100 - m.alpha) * 255 / 100).coerceIn(0, 255)
         if (m.brush) {
             paint.style = Paint.Style.STROKE
             paint.strokeCap = Paint.Cap.ROUND
-            paint.strokeWidth = max(7f, r.width() * 0.009f)
+            paint.strokeWidth = brushStroke(m, r.width())
             c.drawLine(
                 r.left + m.left * r.width(), r.top + m.top * r.height(),
                 r.left + m.right * r.width(), r.top + m.bottom * r.height(), paint
@@ -870,7 +893,7 @@ class ReaderView(ctx: Context, private val host: ReaderHost) : View(ctx) {
         val t = if (len2 == 0f) 0f else (((x - x1) * dx + (y - y1) * dy) / len2).coerceIn(0f, 1f)
         val cx = x1 + t * dx
         val cy = y1 + t * dy
-        val tol = max(18f / zoom, max(7f, w * 0.009f) / 2f + 4f)
+        val tol = max(18f / zoom, brushStroke(m, w) / 2f + 4f)
         return hypot(x - cx, y - cy) <= tol
     }
 
@@ -956,7 +979,7 @@ class ReaderView(ctx: Context, private val host: ReaderHost) : View(ctx) {
         } else if (abs(dx) <= abs(dy) * 0.27f) {
             ex = s.first
         }
-        return Mark(brushPage, s.first.coerceIn(0f, 1f), s.second.coerceIn(0f, 1f), ex, ey, host.markColor, host.markOpacity, true)
+        return Mark(brushPage, s.first.coerceIn(0f, 1f), s.second.coerceIn(0f, 1f), ex, ey, host.markColor, host.markOpacity, true, host.brushWidth)
     }
 
     private fun finishBrush(x: Float, y: Float) {

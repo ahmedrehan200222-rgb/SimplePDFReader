@@ -31,7 +31,8 @@ data class Mark(
     val bottom: Float,
     var color: Int,
     var alpha: Int,
-    val brush: Boolean = false
+    val brush: Boolean = false,
+    var width: Float = 0f   // سمك الفرشاة كنسبة من عرض الصفحة (0 = الافتراضي)
 )
 
 data class TextBox(

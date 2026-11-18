@@ -76,8 +76,10 @@ class MainActivity : Activity(), ReaderHost {
     override val rtlBook: Boolean get() = rtlText
     override val markColor: Int get() = COLORS[chosenColor]
     override val markOpacity: Int get() = opacity
+    override val brushWidth: Float get() = brushSize / 1000f
     private var chosenColor = 0
     private var opacity = 55
+    private var brushSize = 9   // بالألف من عرض الصفحة
     private var volumeFlips = true
     private var chromeVisible = true
     private val prefs by lazy { getSharedPreferences("reader", MODE_PRIVATE) }
@@ -117,6 +119,7 @@ class MainActivity : Activity(), ReaderHost {
         volumeFlips = prefs.getBoolean("volumeFlips", prefs.getInt("soundMode", 0) == 0)
         chosenColor = prefs.getInt("color", 0).coerceIn(0, COLORS.size - 1)
         opacity = prefs.getInt("opacity", 55)
+        brushSize = prefs.getInt("brushSize", 9).coerceIn(2, 40)
         night = prefs.getBoolean("night", false)
         orient = prefs.getInt("orient", 0).coerceIn(0, 2)
         applyOrientation()
@@ -736,6 +739,10 @@ class MainActivity : Activity(), ReaderHost {
         val opp = lp(-2, dp(44))
         opp.setMargins(dp(8), dp(2), dp(4), dp(2))
         paletteRow.addView(op, opp)
+        val bs = uiButton("حجم الفرشاة", false, 13f) { showBrushDialog() }
+        val bsp = lp(-2, dp(44))
+        bsp.setMargins(dp(4), dp(2), dp(4), dp(2))
+        paletteRow.addView(bs, bsp)
     }
 
     private fun applyBookDirection() {
@@ -1137,7 +1144,7 @@ class MainActivity : Activity(), ReaderHost {
 
     override fun editMark(m: Mark) {
         AlertDialog.Builder(this).setTitle("تعديل التمييز")
-            .setItems(arrayOf("تغيير اللون", "تغيير الشفافية", "حذف التمييز")) { _, which ->
+            .setItems((if (m.brush) arrayOf("تغيير اللون", "تغيير الشفافية", "حذف التمييز", "تغيير سمك الفرشاة") else arrayOf("تغيير اللون", "تغيير الشفافية", "حذف التمييز"))) { _, which ->
                 when (which) {
                     0 -> AlertDialog.Builder(this).setTitle("اختر اللون")
                         .setSingleChoiceItems(COLOR_NAMES, COLORS.indexOf(m.color).coerceAtLeast(0)) { d, i ->
@@ -1147,6 +1154,7 @@ class MainActivity : Activity(), ReaderHost {
                             d.dismiss()
                         }.setNegativeButton("إلغاء", null).show()
                     1 -> showOpacityForMark(m)
+                    3 -> showBrushForMark(m)
                     2 -> {
                         rememberUndo()
                         store?.marks?.remove(m)
@@ -1373,6 +1381,53 @@ class MainActivity : Activity(), ReaderHost {
             .setPositiveButton("حفظ") { _, _ ->
                 opacity = value
                 prefs.edit().putInt("opacity", opacity).apply()
+            }.setNegativeButton("إلغاء", null).show()
+    }
+
+    private fun brushBox(initial: Int, onChange: (Int) -> Unit): LinearLayout {
+        val box = LinearLayout(this)
+        box.orientation = LinearLayout.VERTICAL
+        box.setPadding(dp(24), dp(12), dp(24), dp(4))
+        val label = TextView(this)
+        val bar = SeekBar(this)
+        bar.max = 38
+        bar.progress = (initial - 2).coerceIn(0, 38)
+        fun update() {
+            label.text = "سمك الفرشاة: ${2 + bar.progress}  (الافتراضي 9)"
+            onChange(2 + bar.progress)
+        }
+        bar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(s: SeekBar?, p: Int, u: Boolean) {
+                update()
+            }
+
+            override fun onStartTrackingTouch(s: SeekBar?) {}
+            override fun onStopTrackingTouch(s: SeekBar?) {}
+        })
+        box.addView(label)
+        box.addView(bar)
+        update()
+        return box
+    }
+
+    private fun showBrushDialog() {
+        var value = brushSize
+        val box = brushBox(brushSize) { value = it }
+        AlertDialog.Builder(this).setTitle("حجم الفرشاة").setView(box)
+            .setPositiveButton("حفظ") { _, _ ->
+                brushSize = value
+                prefs.edit().putInt("brushSize", brushSize).apply()
+            }.setNegativeButton("إلغاء", null).show()
+    }
+
+    private fun showBrushForMark(m: Mark) {
+        var value = if (m.width > 0f) (m.width * 1000f).toInt() else 9
+        val box = brushBox(value) { value = it }
+        AlertDialog.Builder(this).setTitle("سمك هذا التمييز").setView(box)
+            .setPositiveButton("حفظ") { _, _ ->
+                rememberUndo()
+                m.width = value / 1000f
+                marksChanged()
             }.setNegativeButton("إلغاء", null).show()
     }
 

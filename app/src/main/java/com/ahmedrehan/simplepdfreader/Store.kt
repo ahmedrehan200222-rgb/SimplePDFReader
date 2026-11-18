@@ -53,7 +53,8 @@ class DocStore(private val prefs: SharedPreferences, private val key: String) {
                         o.getDouble("b").toFloat(),
                         o.getInt("c"),
                         o.getInt("a"),
-                        o.optBoolean("brush", false)
+                        o.optBoolean("brush", false),
+                        o.optDouble("w", 0.0).toFloat()
                     )
                 )
             }
@@ -74,6 +75,7 @@ class DocStore(private val prefs: SharedPreferences, private val key: String) {
                     .put("c", m.color)
                     .put("a", m.alpha)
                     .put("brush", m.brush)
+                    .also { if (m.brush && m.width > 0f) it.put("w", m.width.toDouble()) }
             )
         }
         prefs.edit().putString("marks:$key", a.toString()).apply()
